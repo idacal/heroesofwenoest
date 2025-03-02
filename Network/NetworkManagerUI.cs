@@ -4,185 +4,226 @@ using UnityEngine.UI;
 
 public class NetworkManagerUI : MonoBehaviour
 {
+    [Header("UI References")]
     [SerializeField] private Button hostButton;
     [SerializeField] private Button clientButton;
     [SerializeField] private Button serverButton;
-    [SerializeField] private GameObject connectionButtonsPanel;
-
-    // Bandera para rastrear si ya nos hemos suscrito a eventos
-    private bool subscribedToEvents = false;
+    [SerializeField] private GameObject connectionPanel;
+    [SerializeField] private InputField ipAddressInput;
+    
+    [Header("Network Manager")]
+    [SerializeField] private NetworkManager networkManager;
+    
+    private bool isSubscribedToEvents = false;
     
     private void Awake()
     {
-        // Verificar que todas las referencias estén correctamente asignadas
-        bool referencesOk = true;
-        
-        if (hostButton == null) {
-            Debug.LogError("NetworkManagerUI: hostButton no está asignado en el inspector");
-            referencesOk = false;
+        // Check for missing references
+        if (!ValidateReferences())
+        {
+            return;
         }
         
-        if (clientButton == null) {
-            Debug.LogError("NetworkManagerUI: clientButton no está asignado en el inspector");
-            referencesOk = false;
+        // Find NetworkManager if not assigned
+        if (networkManager == null)
+        {
+            networkManager = FindObjectOfType<NetworkManager>();
+            if (networkManager == null)
+            {
+                Debug.LogError("[UI] No NetworkManager found in scene!");
+                return;
+            }
         }
         
-        if (serverButton == null) {
-            Debug.LogError("NetworkManagerUI: serverButton no está asignado en el inspector");
-            referencesOk = false;
-        }
-        
-        if (!referencesOk) return;
-        
-        // Configurar listeners para los botones
+        // Setup button listeners
         SetupButtonListeners();
     }
-
+    
+    private bool ValidateReferences()
+    {
+        bool referencesValid = true;
+        
+        if (hostButton == null)
+        {
+            Debug.LogError("[UI] Host button not assigned in inspector!");
+            referencesValid = false;
+        }
+        
+        if (clientButton == null)
+        {
+            Debug.LogError("[UI] Client button not assigned in inspector!");
+            referencesValid = false;
+        }
+        
+        if (serverButton == null)
+        {
+            Debug.LogError("[UI] Server button not assigned in inspector!");
+            referencesValid = false;
+        }
+        
+        return referencesValid;
+    }
+    
     private void Start()
     {
-        // Intentar suscribirse a eventos en Start, que es después de Awake
+        // Try to subscribe to events in Start (after Awake)
         TrySubscribeToEvents();
     }
     
     private void SetupButtonListeners()
     {
+        // Host Button
         hostButton.onClick.AddListener(() => {
-            // Encontrar el NetworkManager en tiempo de ejecución
-            NetworkManager networkManager = FindObjectOfType<NetworkManager>();
-            if (networkManager != null)
+            Debug.Log("[UI] Starting Host");
+            
+            // Update transport address if provided
+            UpdateTransportAddress();
+            
+            // Start host
+            networkManager.StartHost();
+            
+            // Hide connection UI
+            HideConnectionUI();
+            
+            // Subscribe to events if needed
+            if (!isSubscribedToEvents)
             {
-                networkManager.StartHost();
-                HideConnectionUI();
-                
-                // Intentar suscribirse si aún no lo hemos hecho
-                if (!subscribedToEvents)
-                {
-                    TrySubscribeToEvents();
-                }
-            }
-            else
-            {
-                Debug.LogError("No se pudo encontrar NetworkManager en la escena");
+                TrySubscribeToEvents();
             }
         });
         
+        // Client Button
         clientButton.onClick.AddListener(() => {
-            NetworkManager networkManager = FindObjectOfType<NetworkManager>();
-            if (networkManager != null)
+            Debug.Log("[UI] Starting Client");
+            
+            // Update transport address if provided
+            UpdateTransportAddress();
+            
+            // Start client
+            networkManager.StartClient();
+            
+            // Hide connection UI
+            HideConnectionUI();
+            
+            // Subscribe to events if needed
+            if (!isSubscribedToEvents)
             {
-                networkManager.StartClient();
-                HideConnectionUI();
-                
-                if (!subscribedToEvents)
-                {
-                    TrySubscribeToEvents();
-                }
-            }
-            else
-            {
-                Debug.LogError("No se pudo encontrar NetworkManager en la escena");
+                TrySubscribeToEvents();
             }
         });
         
+        // Server Button
         serverButton.onClick.AddListener(() => {
-            NetworkManager networkManager = FindObjectOfType<NetworkManager>();
-            if (networkManager != null)
+            Debug.Log("[UI] Starting Server");
+            
+            // Start server
+            networkManager.StartServer();
+            
+            // Hide connection UI
+            HideConnectionUI();
+            
+            // Subscribe to events if needed
+            if (!isSubscribedToEvents)
             {
-                networkManager.StartServer();
-                HideConnectionUI();
-                
-                if (!subscribedToEvents)
-                {
-                    TrySubscribeToEvents();
-                }
-            }
-            else
-            {
-                Debug.LogError("No se pudo encontrar NetworkManager en la escena");
+                TrySubscribeToEvents();
             }
         });
     }
     
+    private void UpdateTransportAddress()
+    {
+        // Only change the address if an input was provided and not empty
+        if (ipAddressInput != null && !string.IsNullOrWhiteSpace(ipAddressInput.text))
+        {
+            // Get transport
+            var transport = networkManager.GetComponent<Unity.Netcode.Transports.UTP.UnityTransport>();
+            if (transport != null)
+            {
+                // Set connection data
+                transport.ConnectionData.Address = ipAddressInput.text;
+                Debug.Log($"[UI] Set connection address to: {ipAddressInput.text}");
+            }
+        }
+    }
+    
     private void TrySubscribeToEvents()
     {
-        // Intentar encontrar NetworkManager y suscribirse a eventos
-        NetworkManager networkManager = FindObjectOfType<NetworkManager>();
         if (networkManager != null)
         {
-            // Desuscribirse primero para evitar suscripciones duplicadas
+            // Unsubscribe first to avoid duplicate subscriptions
             networkManager.OnClientConnectedCallback -= OnClientConnected;
             networkManager.OnClientDisconnectCallback -= OnClientDisconnected;
             
-            // Suscribirse a eventos
+            // Subscribe to events
             networkManager.OnClientConnectedCallback += OnClientConnected;
             networkManager.OnClientDisconnectCallback += OnClientDisconnected;
             
-            subscribedToEvents = true;
-            Debug.Log("NetworkManagerUI: Suscrito a eventos de NetworkManager correctamente");
+            isSubscribedToEvents = true;
+            Debug.Log("[UI] Successfully subscribed to NetworkManager events");
         }
         else
         {
-            Debug.LogWarning("NetworkManagerUI: No se puede encontrar NetworkManager para suscribirse a eventos");
+            Debug.LogWarning("[UI] Cannot find NetworkManager to subscribe to events");
         }
     }
     
     private void OnDestroy()
     {
-        // Desuscribirse de eventos al destruir
-        if (subscribedToEvents)
+        // Clean up event subscriptions
+        if (isSubscribedToEvents && networkManager != null)
         {
-            NetworkManager networkManager = FindObjectOfType<NetworkManager>();
-            if (networkManager != null)
-            {
-                networkManager.OnClientConnectedCallback -= OnClientConnected;
-                networkManager.OnClientDisconnectCallback -= OnClientDisconnected;
-            }
+            networkManager.OnClientConnectedCallback -= OnClientConnected;
+            networkManager.OnClientDisconnectCallback -= OnClientDisconnected;
         }
     }
     
     private void OnClientConnected(ulong clientId)
     {
-        NetworkManager networkManager = FindObjectOfType<NetworkManager>();
         if (networkManager != null && clientId == networkManager.LocalClientId)
         {
             HideConnectionUI();
+            Debug.Log($"[UI] Connected as client ID: {clientId}");
         }
     }
     
     private void OnClientDisconnected(ulong clientId)
     {
-        NetworkManager networkManager = FindObjectOfType<NetworkManager>();
         if (networkManager != null && clientId == networkManager.LocalClientId)
         {
             ShowConnectionUI();
+            Debug.Log($"[UI] Disconnected client ID: {clientId}");
         }
     }
     
     private void HideConnectionUI()
     {
-        if (connectionButtonsPanel != null)
+        if (connectionPanel != null)
         {
-            connectionButtonsPanel.SetActive(false);
+            connectionPanel.SetActive(false);
         }
         else
         {
+            // Fall back to hiding individual buttons if no panel
             if (hostButton != null) hostButton.gameObject.SetActive(false);
             if (clientButton != null) clientButton.gameObject.SetActive(false);
             if (serverButton != null) serverButton.gameObject.SetActive(false);
+            if (ipAddressInput != null) ipAddressInput.gameObject.SetActive(false);
         }
     }
     
     private void ShowConnectionUI()
     {
-        if (connectionButtonsPanel != null)
+        if (connectionPanel != null)
         {
-            connectionButtonsPanel.SetActive(true);
+            connectionPanel.SetActive(true);
         }
         else
         {
+            // Fall back to showing individual buttons if no panel
             if (hostButton != null) hostButton.gameObject.SetActive(true);
             if (clientButton != null) clientButton.gameObject.SetActive(true);
             if (serverButton != null) serverButton.gameObject.SetActive(true);
+            if (ipAddressInput != null) ipAddressInput.gameObject.SetActive(true);
         }
     }
 }

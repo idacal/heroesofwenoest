@@ -4,91 +4,106 @@ using System.Collections.Generic;
 
 public class MOBAGameManager : NetworkBehaviour
 {
+    [Header("Player Setup")]
     [SerializeField] private GameObject playerPrefab;
     
-    // Lista de puntos de aparición para el equipo 1
+    [Header("Team Spawn Points")]
     [SerializeField] private Transform[] team1SpawnPoints;
-    
-    // Lista de puntos de aparición para el equipo 2
     [SerializeField] private Transform[] team2SpawnPoints;
     
-    // Diccionario para rastrear los jugadores y sus equipos
+    [Header("Team Colors")]
+    [SerializeField] private Color team1Color = Color.blue;
+    [SerializeField] private Color team2Color = Color.red;
+    
+    // Dictionary to track players and their teams
     private Dictionary<ulong, int> playerTeams = new Dictionary<ulong, int>();
-    
-    // Contador para debugging
     private int playerSpawnCount = 0;
-    
-    // Variable para rastrear si ya hemos spawneado al jugador local
-    private bool localPlayerSpawned = false;
     
     public override void OnNetworkSpawn()
     {
         if (IsServer)
         {
-            Debug.Log("MOBAGameManager iniciado como servidor");
+            Debug.Log("[MANAGER] MOBAGameManager initialized as server");
             
-            // Solo el servidor maneja la conexión de jugadores
+            // Only the server handles player connections
             NetworkManager.Singleton.OnClientConnectedCallback += OnPlayerConnected;
             NetworkManager.Singleton.OnClientDisconnectCallback += OnPlayerDisconnected;
+            
+            // If we're also a client (host mode), spawn our own player
+            if (IsClient)
+            {
+                ulong localClientId = NetworkManager.Singleton.LocalClientId;
+                Debug.Log($"[MANAGER] Host mode detected, spawning host player with ID: {localClientId}");
+                SpawnPlayer(localClientId);
+            }
         }
     }
     
     private void OnPlayerConnected(ulong clientId)
     {
-        // Verificación para evitar spawns duplicados
+        // Don't spawn again if already spawned (prevents duplicates)
         if (playerTeams.ContainsKey(clientId))
         {
-            Debug.LogWarning($"[MOBA] El jugador {clientId} ya está registrado, ignorando conexión duplicada.");
+            Debug.LogWarning($"[MANAGER] Player {clientId} already registered, ignoring duplicate connection.");
             return;
         }
         
-        Debug.Log($"[MOBA] Nuevo jugador conectado con ID: {clientId}, conteo actual: {playerSpawnCount}");
+        Debug.Log($"[MANAGER] New player connected with ID: {clientId}");
         
-        // Asignar al equipo 1 o 2 dependiendo de si es número par o impar
+        // Spawn player for this client
+        SpawnPlayer(clientId);
+    }
+    
+    private void SpawnPlayer(ulong clientId)
+    {
+        // Assign to team 1 or 2 based on even/odd count
         int teamId = (playerSpawnCount % 2) + 1;
         playerTeams[clientId] = teamId;
         
-        // Seleccionar punto de spawn
+        // Select spawn point
         Transform[] spawnPoints = (teamId == 1) ? team1SpawnPoints : team2SpawnPoints;
         if (spawnPoints == null || spawnPoints.Length == 0)
         {
-            Debug.LogError($"[MOBA] Error: No hay puntos de spawn configurados para el equipo {teamId}");
+            Debug.LogError($"[MANAGER] Error: No spawn points configured for team {teamId}");
             return;
         }
         
-        // Usar módulo para seleccionar spawn point (se repiten cíclicamente)
+        // Use modulo to select spawn point (cycle through available points)
         int spawnIndex = (playerSpawnCount / 2) % spawnPoints.Length;
         Transform spawnPoint = spawnPoints[spawnIndex];
         
-        Debug.Log($"[MOBA] Spawneando jugador {clientId} como equipo {teamId} en posición {spawnPoint.position}");
+        Debug.Log($"[MANAGER] Spawning player {clientId} as team {teamId} at position {spawnPoint.position}");
         
-        // Instanciar el jugador
+        // Instantiate player
         GameObject playerInstance = Instantiate(playerPrefab, spawnPoint.position, spawnPoint.rotation);
         NetworkObject networkObject = playerInstance.GetComponent<NetworkObject>();
         
         if (networkObject != null)
         {
-            // Incrementar contador después de spawn exitoso
+            // Increment counter after successful spawn
             playerSpawnCount++;
             
-            // Spawn del objeto en la red
+            // Add custom player ID for better identification in logs
+            playerInstance.name = $"Player_{clientId}_Team{teamId}";
+            
+            // Spawn the object on the network
             networkObject.SpawnAsPlayerObject(clientId);
             
-            // Notificar al cliente sobre su equipo
+            // Notify client about their team
             NotifyPlayerTeamClientRpc(clientId, teamId);
         }
         else
         {
-            Debug.LogError("[MOBA] El prefab del jugador no tiene componente NetworkObject");
+            Debug.LogError("[MANAGER] Player prefab does not have NetworkObject component");
             Destroy(playerInstance);
         }
     }
     
     private void OnPlayerDisconnected(ulong clientId)
     {
-        Debug.Log($"[MOBA] Jugador desconectado: {clientId}");
+        Debug.Log($"[MANAGER] Player disconnected: {clientId}");
         
-        // Limpiar datos
+        // Clean up player data
         if (playerTeams.ContainsKey(clientId))
         {
             playerTeams.Remove(clientId);
@@ -98,46 +113,53 @@ public class MOBAGameManager : NetworkBehaviour
     [ClientRpc]
     private void NotifyPlayerTeamClientRpc(ulong clientId, int teamId)
     {
-        // Solo actuar si somos el cliente al que se le envió este mensaje
-        if (NetworkManager.Singleton.LocalClientId == clientId)
+        // Only act if we are the client this message was sent to
+        if (NetworkManager.Singleton.LocalClientId != clientId)
         {
-            Debug.Log($"[MOBA] Eres parte del equipo {teamId}");
-            
-            // Encontrar el objeto de jugador local
-            GameObject localPlayerObject = null;
-            PlayerNetwork[] players = FindObjectsOfType<PlayerNetwork>();
-            
-            foreach (PlayerNetwork player in players)
+            return;
+        }
+        
+        Debug.Log($"[MANAGER] You are on team {teamId}");
+        
+        // Find the local player object
+        GameObject localPlayerObject = null;
+        PlayerNetwork[] players = FindObjectsOfType<PlayerNetwork>();
+        
+        foreach (PlayerNetwork player in players)
+        {
+            if (player.IsLocalPlayer)
             {
-                if (player.IsLocalPlayer)
-                {
-                    localPlayerObject = player.gameObject;
-                    break;
-                }
+                localPlayerObject = player.gameObject;
+                break;
             }
-            
-            if (localPlayerObject != null)
+        }
+        
+        if (localPlayerObject != null)
+        {
+            // Change color based on team
+            Renderer renderer = localPlayerObject.GetComponent<Renderer>();
+            if (renderer != null)
             {
-                // Cambiar color según equipo
-                Renderer renderer = localPlayerObject.GetComponent<Renderer>();
-                if (renderer != null)
-                {
-                    if (teamId == 1)
-                    {
-                        renderer.material.color = Color.blue;
-                    }
-                    else
-                    {
-                        renderer.material.color = Color.red;
-                    }
-                    
-                    Debug.Log($"[MOBA] Color del jugador actualizado para equipo {teamId}");
-                }
+                // Apply appropriate team color
+                Color teamColor = (teamId == 1) ? team1Color : team2Color;
+                renderer.material.color = teamColor;
+                
+                Debug.Log($"[MANAGER] Player color updated for team {teamId}");
             }
-            else
-            {
-                Debug.LogWarning("[MOBA] No se pudo encontrar el objeto de jugador local");
-            }
+        }
+        else
+        {
+            Debug.LogWarning("[MANAGER] Could not find local player object");
+        }
+    }
+    
+    public override void OnDestroy()
+    {
+        // Clean up event subscriptions
+        if (NetworkManager.Singleton != null)
+        {
+            NetworkManager.Singleton.OnClientConnectedCallback -= OnPlayerConnected;
+            NetworkManager.Singleton.OnClientDisconnectCallback -= OnPlayerDisconnected;
         }
     }
 }

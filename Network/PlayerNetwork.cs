@@ -1,14 +1,19 @@
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.AI;
 
 public class PlayerNetwork : NetworkBehaviour
 {
     [Header("Movement Settings")]
     [SerializeField] private float movementSpeed = 7f;
     [SerializeField] private float rotationSpeed = 10f;
+    [SerializeField] private float clickMovementSpeed = 7f;
+    [SerializeField] private float stoppingDistance = 0.2f;
+    [SerializeField] private LayerMask groundLayer; // Capa para detectar el suelo con raycasts
     
-    [Header("Camera")]
-    [SerializeField] private GameObject mobaCameraPrefab;
+    [Header("References")]
+    [SerializeField] private GameObject cameraPrefab; // Referencia al prefab MOBACamera
+    [SerializeField] private GameObject clickIndicatorPrefab; // Prefab para el indicador de clic
     
     // Variables de red para sincronizar
     private NetworkVariable<Vector3> networkPosition = new NetworkVariable<Vector3>(
@@ -21,182 +26,371 @@ public class PlayerNetwork : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
     
-    // Referencias de componentes - estrictamente locales, no sincronizadas
-    private Camera playerCamera;
+    // Referencias locales - NO se sincronizan por red
+    private GameObject localCameraObject;
     private MOBACamera mobaCameraComponent;
+    private Camera playerCamera;
+    private string playerUniqueId;
     
-    // Eliminamos la variable estática que causaba el problema
-    // private static bool localCameraCreated = false;
+    // Click Indicator
+    private GameObject localClickIndicator;
     
-    // Nueva variable para controlar que este jugador específico ya ha creado su cámara
-    private bool hasCameraBeenCreated = false;
+    // Variables para movimiento por clic
+    private Vector3 targetPosition;
+    private bool isMovingToTarget = false;
+    private Vector3 lastPosition;
+    private float stuckTimer = 0f;
+    private float stuckThreshold = 0.5f; // Tiempo antes de considerar que está atascado
     
+    private void Awake()
+    {
+        // Generar ID único para este jugador para propósitos de depuración
+        playerUniqueId = System.Guid.NewGuid().ToString().Substring(0, 8);
+    }
+    
+    // Override para el spawn en red
     public override void OnNetworkSpawn()
     {
-        // Inicializar posición y rotación en la red al spawnearse
+        Debug.Log($"[PLAYER_{playerUniqueId}] OnNetworkSpawn - IsOwner: {IsOwner}, IsLocalPlayer: {IsLocalPlayer}, OwnerClientId: {OwnerClientId}");
+        
+        // Inicializar posición y rotación en la red
         if (IsServer)
         {
             networkPosition.Value = transform.position;
             networkRotation.Value = transform.rotation;
         }
         
-        if (IsOwner && IsLocalPlayer)
+        // Solo el cliente local debe crear y gestionar su propia cámara
+        if (IsLocalPlayer)
         {
-            Debug.Log($"[PLAYER] Configurando jugador local con ID: {OwnerClientId}");
+            Debug.Log($"[PLAYER_{playerUniqueId}] Configurando jugador local con ClientId: {OwnerClientId}");
             
-            // Verificar si ESTE jugador específico ya tiene cámara
-            if (!hasCameraBeenCreated)
+            // Inicializar posición objetivo con posición actual
+            targetPosition = transform.position;
+            lastPosition = transform.position;
+            
+            // Pequeño delay para asegurar que todo está inicializado correctamente
+            Invoke("CreateLocalCamera", 0.2f);
+            
+            // Crear Indicator si está configurado
+            if (clickIndicatorPrefab != null)
             {
-                SetupLocalCamera();
-                hasCameraBeenCreated = true;
+                CreateLocalClickIndicator();
             }
         }
     }
     
-    private void SetupLocalCamera()
+    private void CreateLocalClickIndicator()
     {
+        if (localClickIndicator != null)
+        {
+            Destroy(localClickIndicator);
+        }
+        
+        localClickIndicator = Instantiate(clickIndicatorPrefab);
+        localClickIndicator.name = $"ClickIndicator_{playerUniqueId}";
+        
+        // Asegurar que no tenga componentes de red
+        NetworkObject indicatorNetObj = localClickIndicator.GetComponent<NetworkObject>();
+        if (indicatorNetObj != null)
+        {
+            Destroy(indicatorNetObj);
+        }
+        
+        // No destruir al cambiar de escena
+        DontDestroyOnLoad(localClickIndicator);
+        
+        // Desactivar inicialmente
+        localClickIndicator.SetActive(false);
+    }
+    
+    private void CreateLocalCamera()
+    {
+        Debug.Log($"[PLAYER_{playerUniqueId}] Iniciando creación de cámara local");
+        
+        // Verificar si tenemos un prefab de cámara asignado
+        if (cameraPrefab == null)
+        {
+            Debug.LogError($"[PLAYER_{playerUniqueId}] ERROR: No hay prefab de cámara asignado!");
+            return;
+        }
+        
         // Primero, destruimos cualquier cámara existente que pertenezca a este jugador
-        // (esto es una precaución adicional)
         MOBACamera[] existingCameras = FindObjectsOfType<MOBACamera>();
         foreach (MOBACamera cam in existingCameras)
         {
-            // Si la cámara ya está siguiendo a este jugador, la destruimos
             if (cam.GetTarget() == transform)
             {
+                Debug.Log($"[PLAYER_{playerUniqueId}] Destruyendo cámara duplicada para este jugador");
                 Destroy(cam.gameObject);
-                Debug.Log("[CAMERA] Destruyendo cámara duplicada");
             }
         }
         
-        // Crear la cámara solo para el jugador local
-        if (mobaCameraPrefab != null)
+        // Crear nueva cámara completamente independiente
+        localCameraObject = Instantiate(cameraPrefab);
+        if (localCameraObject == null)
         {
-            GameObject cameraObject = Instantiate(mobaCameraPrefab);
-            if (cameraObject == null)
-            {
-                Debug.LogError("No se pudo instanciar el prefab de la cámara");
-                return;
-            }
-            
-            // Asegurar que este objeto no se sincronice por red
-            NetworkObject networkObject = cameraObject.GetComponent<NetworkObject>();
-            if (networkObject != null)
-            {
-                // Si por alguna razón tiene NetworkObject, lo desactivamos
-                Destroy(networkObject);
-                Debug.LogWarning("Se eliminó el componente NetworkObject de la cámara para evitar sincronización");
-            }
-            
-            playerCamera = cameraObject.GetComponent<Camera>();
-            mobaCameraComponent = cameraObject.GetComponent<MOBACamera>();
-            
-            if (mobaCameraComponent != null)
-            {
-                // Configurar la cámara para conocer al jugador, pero NO seguirlo automáticamente
-                mobaCameraComponent.SetTarget(transform);
-                
-                // Centrar la cámara en el jugador inicialmente
-                mobaCameraComponent.CenterOnPlayer();
-                
-                // Identificar claramente la cámara para depuración
-                cameraObject.name = $"MOBACamera_Player_{OwnerClientId}";
-                
-                Debug.Log($"[CAMERA] Cámara MOBA configurada correctamente para el jugador local ID: {OwnerClientId}");
-            }
-            else
-            {
-                Debug.LogError("El prefab de la cámara no tiene el componente MOBACamera");
-            }
+            Debug.LogError($"[PLAYER_{playerUniqueId}] ERROR: No se pudo instanciar el prefab de cámara!");
+            return;
         }
-        else
+        
+        // Asignar nombre único para depuración
+        localCameraObject.name = $"PlayerCamera_{OwnerClientId}_{playerUniqueId}";
+        
+        // Obtener componentes de cámara
+        mobaCameraComponent = localCameraObject.GetComponent<MOBACamera>();
+        playerCamera = localCameraObject.GetComponent<Camera>();
+        
+        if (mobaCameraComponent == null || playerCamera == null)
         {
-            Debug.LogError("mobaCameraPrefab no está asignado en el inspector");
+            Debug.LogError($"[PLAYER_{playerUniqueId}] ERROR: El prefab de cámara no tiene los componentes necesarios!");
+            Destroy(localCameraObject);
+            return;
         }
+        
+        // Configurar la cámara
+        mobaCameraComponent.SetTarget(transform);
+        
+        // Asegurar que no hay componentes de red en la cámara
+        NetworkObject cameraNetObj = localCameraObject.GetComponent<NetworkObject>();
+        if (cameraNetObj != null)
+        {
+            Debug.LogWarning($"[PLAYER_{playerUniqueId}] Eliminando NetworkObject de la cámara para evitar sincronización!");
+            Destroy(cameraNetObj);
+        }
+        
+        // Evitar que Unity destruya la cámara al cambiar de escena
+        DontDestroyOnLoad(localCameraObject);
+        
+        Debug.Log($"[PLAYER_{playerUniqueId}] Cámara creada exitosamente: {localCameraObject.name}");
     }
     
     private void Update()
     {
-        if (IsOwner)
+        if (IsLocalPlayer)
         {
-            // Control de movimiento para el propietario del objeto
-            HandleMovement();
+            // Procesar input de movimiento solo para el jugador local
+            HandleKeyboardMovement();
+            HandleMouseMovement();
+            
+            // Manejar movimiento hacia posición objetivo si estamos en modo click-to-move
+            if (isMovingToTarget)
+            {
+                MoveToTargetPosition();
+            }
         }
         else
         {
-            // Interpolación para otros clientes
+            // Para otros jugadores, interpolar suavemente posición y rotación
             transform.position = Vector3.Lerp(transform.position, networkPosition.Value, Time.deltaTime * 10f);
             transform.rotation = Quaternion.Lerp(transform.rotation, networkRotation.Value, Time.deltaTime * 10f);
         }
     }
     
-    private void HandleMovement()
+    private void HandleKeyboardMovement()
     {
-        // Movimiento basado en entrada WASD o flechas
-        float horizontalInput = Input.GetAxis("Horizontal");
-        float verticalInput = Input.GetAxis("Vertical");
+        // Si estamos moviendo con teclado, cancelar cualquier movimiento por clic
+        float horizontal = Input.GetAxis("Horizontal");
+        float vertical = Input.GetAxis("Vertical");
         
-        if (horizontalInput != 0 || verticalInput != 0)
+        if (horizontal != 0 || vertical != 0)
         {
-            // Crear vector de movimiento
-            Vector3 movementDirection = new Vector3(horizontalInput, 0f, verticalInput).normalized;
+            // Cancelar movimiento por clic si estamos usando teclado
+            isMovingToTarget = false;
             
-            // Convertir el movimiento según la perspectiva de la cámara isométrica
-            // (Buscar la cámara local si no la tenemos ya)
-            if (playerCamera == null && Camera.main != null)
-            {
-                playerCamera = Camera.main;
-            }
+            // Vector normalizado para movimiento
+            Vector3 moveDirection = new Vector3(horizontal, 0f, vertical).normalized;
             
+            // Ajustar dirección según orientación de la cámara
             if (playerCamera != null)
             {
-                Vector3 cameraForward = playerCamera.transform.forward;
-                Vector3 cameraRight = playerCamera.transform.right;
+                // Obtener vectores de la cámara
+                Vector3 camForward = playerCamera.transform.forward;
+                Vector3 camRight = playerCamera.transform.right;
                 
-                // Aplanar los vectores a XZ
-                cameraForward.y = 0;
-                cameraRight.y = 0;
-                cameraForward.Normalize();
-                cameraRight.Normalize();
+                // Aplanar a plano XZ
+                camForward.y = 0;
+                camRight.y = 0;
+                camForward.Normalize();
+                camRight.Normalize();
                 
-                // Recalcular la dirección del movimiento relativa a la cámara
-                movementDirection = cameraRight * horizontalInput + cameraForward * verticalInput;
-                movementDirection.Normalize();
+                // Recalcular dirección relativa a la cámara
+                moveDirection = camRight * horizontal + camForward * vertical;
+                moveDirection.Normalize();
+            }
+            else if (Camera.main != null)
+            {
+                // Fallback a la cámara principal
+                Vector3 camForward = Camera.main.transform.forward;
+                Vector3 camRight = Camera.main.transform.right;
+                
+                camForward.y = 0;
+                camRight.y = 0;
+                camForward.Normalize();
+                camRight.Normalize();
+                
+                moveDirection = camRight * horizontal + camForward * vertical;
+                moveDirection.Normalize();
             }
             
-            // Aplicar velocidad y tiempo delta
-            Vector3 movement = movementDirection * movementSpeed * Time.deltaTime;
-            
-            // Mover el personaje
+            // Aplicar movimiento
+            Vector3 movement = moveDirection * movementSpeed * Time.deltaTime;
             transform.Translate(movement, Space.World);
             
-            // Rotar el personaje hacia la dirección del movimiento
-            if (movementDirection != Vector3.zero)
+            // Rotar hacia la dirección del movimiento
+            if (moveDirection != Vector3.zero)
             {
-                Quaternion targetRotation = Quaternion.LookRotation(movementDirection);
+                Quaternion targetRotation = Quaternion.LookRotation(moveDirection);
                 transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
             }
             
-            // Enviar la posición y rotación actualizadas al servidor
-            UpdateTransformServerRpc(transform.position, transform.rotation);
+            // Sincronizar posición y rotación con el servidor
+            UpdatePositionServerRpc(transform.position, transform.rotation);
+        }
+    }
+    
+    private void HandleMouseMovement()
+    {
+        // Click derecho para mover
+        if (Input.GetMouseButtonDown(1))
+        {
+            Ray ray = playerCamera != null ? playerCamera.ScreenPointToRay(Input.mousePosition) : Camera.main.ScreenPointToRay(Input.mousePosition);
+            RaycastHit hit;
+            
+            // Verificar si el raycast golpea en la capa del suelo
+            if (Physics.Raycast(ray, out hit, 100f, groundLayer))
+            {
+                // Establecer la posición objetivo y activar movimiento
+                targetPosition = hit.point;
+                isMovingToTarget = true;
+                
+                // Reiniciar timer de atasco
+                stuckTimer = 0f;
+                lastPosition = transform.position;
+                
+                // Mostrar indicador de clic si está configurado
+                if (localClickIndicator != null)
+                {
+                    ClickIndicator indicator = localClickIndicator.GetComponent<ClickIndicator>();
+                    if (indicator != null)
+                    {
+                        indicator.ShowAt(hit.point);
+                    }
+                }
+                
+                Debug.Log($"[PLAYER_{playerUniqueId}] Moviendo a posición: {targetPosition}");
+            }
+        }
+    }
+    
+    private void MoveToTargetPosition()
+    {
+        // Calcular dirección hacia el objetivo
+        Vector3 direction = targetPosition - transform.position;
+        direction.y = 0; // Ignorar diferencia de altura
+        
+        // Calcular distancia al objetivo
+        float distance = direction.magnitude;
+        
+        // Si estamos lo suficientemente cerca del objetivo, detenerse
+        if (distance <= stoppingDistance)
+        {
+            isMovingToTarget = false;
+            return;
+        }
+        
+        // Normalizar dirección
+        direction.Normalize();
+        
+        // Rotar hacia la dirección objetivo
+        Quaternion targetRotation = Quaternion.LookRotation(direction);
+        transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
+        
+        // Mover hacia el objetivo
+        Vector3 movement = direction * clickMovementSpeed * Time.deltaTime;
+        transform.Translate(movement, Space.World);
+        
+        // Sincronizar con el servidor
+        UpdatePositionServerRpc(transform.position, transform.rotation);
+        
+        // Detectar si estamos atascados
+        DetectIfStuck();
+    }
+    
+    private void DetectIfStuck()
+    {
+        // Si no nos hemos movido significativamente en un tiempo, cancelar movimiento
+        float movedDistance = Vector3.Distance(transform.position, lastPosition);
+        if (movedDistance < 0.01f)
+        {
+            stuckTimer += Time.deltaTime;
+            if (stuckTimer > stuckThreshold)
+            {
+                Debug.Log($"[PLAYER_{playerUniqueId}] Detectado atasco, cancelando movimiento");
+                isMovingToTarget = false;
+                stuckTimer = 0f;
+            }
+        }
+        else
+        {
+            // Reiniciar timer si nos movemos
+            stuckTimer = 0f;
+            lastPosition = transform.position;
         }
     }
     
     [ServerRpc]
-    private void UpdateTransformServerRpc(Vector3 newPosition, Quaternion newRotation)
+    private void UpdatePositionServerRpc(Vector3 newPosition, Quaternion newRotation)
     {
-        // Actualizar variables de red (esto se ejecuta solo en el servidor)
+        // Actualizar variables de red (solo en el servidor)
         networkPosition.Value = newPosition;
         networkRotation.Value = newRotation;
     }
     
-    // Método para reiniciar la bandera cuando se destruye el jugador
+    // Importante: Detener sincronización al desconectar
+    public override void OnNetworkDespawn()
+    {
+        Debug.Log($"[PLAYER_{playerUniqueId}] OnNetworkDespawn - IsLocalPlayer: {IsLocalPlayer}");
+        
+        if (IsLocalPlayer)
+        {
+            if (localCameraObject != null)
+            {
+                Debug.Log($"[PLAYER_{playerUniqueId}] Destruyendo cámara al despawnear jugador");
+                Destroy(localCameraObject);
+                localCameraObject = null;
+                mobaCameraComponent = null;
+            }
+            
+            // Destruir indicador de clic
+            if (localClickIndicator != null)
+            {
+                Debug.Log($"[PLAYER_{playerUniqueId}] Destruyendo indicador de clic al despawnear jugador");
+                Destroy(localClickIndicator);
+                localClickIndicator = null;
+            }
+        }
+    }
+    
+    // Limpieza al destruir el objeto
     private void OnDestroy()
     {
-        // Ya no necesitamos manipular una variable estática
-        // Solo asegúrate de que la cámara también se destruya si pertenece a este jugador
-        if (mobaCameraComponent != null && IsOwner)
+        Debug.Log($"[PLAYER_{playerUniqueId}] OnDestroy - IsLocalPlayer: {(IsLocalPlayer ? "Sí" : "No")}");
+        
+        if (IsLocalPlayer)
         {
-            Destroy(mobaCameraComponent.gameObject);
+            if (localCameraObject != null)
+            {
+                Debug.Log($"[PLAYER_{playerUniqueId}] Destruyendo cámara del jugador");
+                Destroy(localCameraObject);
+            }
+            
+            // Destruir indicador de clic
+            if (localClickIndicator != null)
+            {
+                Debug.Log($"[PLAYER_{playerUniqueId}] Destruyendo indicador de clic");
+                Destroy(localClickIndicator);
+            }
         }
     }
 }
