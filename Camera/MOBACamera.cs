@@ -65,27 +65,24 @@ public class MOBACamera : MonoBehaviour
         Debug.Log($"[CAMERA] Inicializando cámara con ID único: {cameraId}");
     }
     
-    private void Start()
+private void Start()
+{
+    // Rotación inicial (personalizada según tus especificaciones)
+    transform.rotation = Quaternion.Euler(45f, 0f, 0f);
+    
+    // Inicializar posición de la cámara
+    if (target != null)
     {
-        // Rotación inicial (isométrica)
-        transform.rotation = Quaternion.Euler(cameraPitch, 45f, 0f);
-        
-        // Inicializar posición de la cámara
-        if (target != null)
-        {
-            cameraTargetPosition = target.position;
-            UpdateCameraPosition(false); // Posicionamiento inmediato
-        }
-        else
-        {
-            // Sin target, usar posición actual
-            Vector3 dirToGround = Quaternion.Euler(-cameraPitch, -45f, 0f) * Vector3.forward;
-            cameraTargetPosition = transform.position + dirToGround * cameraDistance;
-            cameraTargetPosition.y = 0; // Ignorar altura
-            
-            Debug.LogWarning($"[CAMERA_{cameraId}] Cámara iniciada sin objetivo. Asigna un target usando SetTarget().");
-        }
+        cameraTargetPosition = target.position;
     }
+    else
+    {
+        // Sin target, usar posición específica
+        cameraTargetPosition = new Vector3(0f, 10f, -8f);
+    }
+    
+    UpdateCameraPosition(false); // Posicionamiento inmediato
+}
     
     private void LateUpdate()
     {

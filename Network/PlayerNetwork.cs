@@ -1,15 +1,21 @@
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
+using System.Collections;
 
 public class PlayerNetwork : NetworkBehaviour
 {
     [Header("Movement Settings")]
-    [SerializeField] private float movementSpeed = 7f;
-    [SerializeField] private float rotationSpeed = 10f;
     [SerializeField] private float clickMovementSpeed = 7f;
+    [SerializeField] private float rotationSpeed = 10f;
     [SerializeField] private float stoppingDistance = 0.2f;
     [SerializeField] private LayerMask groundLayer; // Capa para detectar el suelo con raycasts
+    
+    [Header("Collision Settings")]
+    [SerializeField] private float repulsionForce = 15f;          // Fuerza de repulsión cuando colisionan
+    [SerializeField] private float collisionDamage = 10f;         // Daño base por colisión
+    [SerializeField] private float collisionStunDuration = 1.0f;  // Duración del aturdimiento tras colisión
+    [SerializeField] private GameObject collisionEffectPrefab;    // Efecto visual opcional
     
     [Header("References")]
     [SerializeField] private GameObject cameraPrefab; // Referencia al prefab MOBACamera
@@ -24,6 +30,12 @@ public class PlayerNetwork : NetworkBehaviour
     private NetworkVariable<Quaternion> networkRotation = new NetworkVariable<Quaternion>(
         Quaternion.identity,
         NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+    
+    // Nueva variable para sincronizar el estado de aturdimiento
+    private NetworkVariable<bool> isStunned = new NetworkVariable<bool>(
+        false,
+        NetworkVariableReadPermission.Everyone, 
         NetworkVariableWritePermission.Server);
     
     // Referencias locales - NO se sincronizan por red
@@ -42,10 +54,31 @@ public class PlayerNetwork : NetworkBehaviour
     private float stuckTimer = 0f;
     private float stuckThreshold = 0.5f; // Tiempo antes de considerar que está atascado
     
+    // Nuevas variables para colisión
+    private Rigidbody rb;
+    private bool canMove = true;
+    
+    // Referencia al componente de estadísticas del jugador (si existe)
+    private PlayerStats playerStats;
+    
     private void Awake()
     {
         // Generar ID único para este jugador para propósitos de depuración
         playerUniqueId = System.Guid.NewGuid().ToString().Substring(0, 8);
+        
+        // Obtener referencias
+        rb = GetComponent<Rigidbody>();
+        if (rb == null)
+        {
+            // Si no hay Rigidbody, lo creamos
+            rb = gameObject.AddComponent<Rigidbody>();
+            rb.constraints = RigidbodyConstraints.FreezeRotation | RigidbodyConstraints.FreezePositionY;
+            rb.interpolation = RigidbodyInterpolation.Interpolate;
+            rb.collisionDetectionMode = CollisionDetectionMode.Continuous;
+        }
+        
+        // Obtener PlayerStats si existe
+        playerStats = GetComponent<PlayerStats>();
     }
     
     // Override para el spawn en red
@@ -58,6 +91,7 @@ public class PlayerNetwork : NetworkBehaviour
         {
             networkPosition.Value = transform.position;
             networkRotation.Value = transform.rotation;
+            isStunned.Value = false;
         }
         
         // Solo el cliente local debe crear y gestionar su propia cámara
@@ -76,6 +110,28 @@ public class PlayerNetwork : NetworkBehaviour
             if (clickIndicatorPrefab != null)
             {
                 CreateLocalClickIndicator();
+            }
+        }
+        
+        // Suscribirse al cambio de la variable isStunned
+        isStunned.OnValueChanged += OnStunnedValueChanged;
+    }
+    
+    // Método que se ejecuta cuando cambia el valor de isStunned
+    private void OnStunnedValueChanged(bool oldValue, bool newValue)
+    {
+        // Actualizar el estado local de movimiento
+        canMove = !newValue;
+        
+        // Si está aturdido, detener cualquier movimiento
+        if (newValue)
+        {
+            isMovingToTarget = false;
+            
+            // Si somos el dueño, detenemos el rigidbody
+            if (IsOwner && rb != null)
+            {
+                rb.velocity = Vector3.zero;
             }
         }
     }
@@ -169,88 +225,41 @@ public class PlayerNetwork : NetworkBehaviour
     {
         if (IsLocalPlayer)
         {
-            // Procesar input de movimiento solo para el jugador local
-            HandleKeyboardMovement();
-            HandleMouseMovement();
-            
-            // Manejar movimiento hacia posición objetivo si estamos en modo click-to-move
-            if (isMovingToTarget)
+            // Solo procesar input si no estamos aturdidos
+            if (canMove)
             {
-                MoveToTargetPosition();
+                // Procesar input de movimiento solo para el jugador local
+                HandleMouseMovement();
+                
+                // Manejar movimiento hacia posición objetivo si estamos en modo click-to-move
+                if (isMovingToTarget)
+                {
+                    MoveToTargetPosition();
+                }
+            }
+            
+            // Cuando estemos usando físicas, actualizar la posición en el servidor
+            // incluso si no estamos controlando el movimiento directamente
+            if (!canMove && rb != null && rb.velocity.magnitude > 0.01f)
+            {
+                UpdatePositionServerRpc(transform.position, transform.rotation);
             }
         }
         else
         {
             // Para otros jugadores, interpolar suavemente posición y rotación
-            transform.position = Vector3.Lerp(transform.position, networkPosition.Value, Time.deltaTime * 10f);
-            transform.rotation = Quaternion.Lerp(transform.rotation, networkRotation.Value, Time.deltaTime * 10f);
-        }
-    }
-    
-    private void HandleKeyboardMovement()
-    {
-        // Si estamos moviendo con teclado, cancelar cualquier movimiento por clic
-        float horizontal = Input.GetAxis("Horizontal");
-        float vertical = Input.GetAxis("Vertical");
-        
-        if (horizontal != 0 || vertical != 0)
-        {
-            // Cancelar movimiento por clic si estamos usando teclado
-            isMovingToTarget = false;
-            
-            // Vector normalizado para movimiento
-            Vector3 moveDirection = new Vector3(horizontal, 0f, vertical).normalized;
-            
-            // Ajustar dirección según orientación de la cámara
-            if (playerCamera != null)
-            {
-                // Obtener vectores de la cámara
-                Vector3 camForward = playerCamera.transform.forward;
-                Vector3 camRight = playerCamera.transform.right;
-                
-                // Aplanar a plano XZ
-                camForward.y = 0;
-                camRight.y = 0;
-                camForward.Normalize();
-                camRight.Normalize();
-                
-                // Recalcular dirección relativa a la cámara
-                moveDirection = camRight * horizontal + camForward * vertical;
-                moveDirection.Normalize();
-            }
-            else if (Camera.main != null)
-            {
-                // Fallback a la cámara principal
-                Vector3 camForward = Camera.main.transform.forward;
-                Vector3 camRight = Camera.main.transform.right;
-                
-                camForward.y = 0;
-                camRight.y = 0;
-                camForward.Normalize();
-                camRight.Normalize();
-                
-                moveDirection = camRight * horizontal + camForward * vertical;
-                moveDirection.Normalize();
-            }
-            
-            // Aplicar movimiento
-            Vector3 movement = moveDirection * movementSpeed * Time.deltaTime;
-            transform.Translate(movement, Space.World);
-            
-            // Rotar hacia la dirección del movimiento
-            if (moveDirection != Vector3.zero)
-            {
-                Quaternion targetRotation = Quaternion.LookRotation(moveDirection);
-                transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, rotationSpeed * Time.deltaTime);
-            }
-            
-            // Sincronizar posición y rotación con el servidor
-            UpdatePositionServerRpc(transform.position, transform.rotation);
+            // Use una interpolación más rápida después de una colisión
+            float lerpSpeed = isStunned.Value ? 20f : 10f;
+            transform.position = Vector3.Lerp(transform.position, networkPosition.Value, Time.deltaTime * lerpSpeed);
+            transform.rotation = Quaternion.Lerp(transform.rotation, networkRotation.Value, Time.deltaTime * lerpSpeed);
         }
     }
     
     private void HandleMouseMovement()
     {
+        // Si estamos aturdidos, no procesar movimiento
+        if (!canMove) return;
+        
         // Click derecho para mover
         if (Input.GetMouseButtonDown(1))
         {
@@ -285,6 +294,9 @@ public class PlayerNetwork : NetworkBehaviour
     
     private void MoveToTargetPosition()
     {
+        // Si estamos aturdidos, no procesar movimiento
+        if (!canMove) return;
+        
         // Calcular dirección hacia el objetivo
         Vector3 direction = targetPosition - transform.position;
         direction.y = 0; // Ignorar diferencia de altura
@@ -339,6 +351,131 @@ public class PlayerNetwork : NetworkBehaviour
         }
     }
     
+    // Método nuevo para colisiones
+    private void OnCollisionEnter(Collision collision)
+    {
+        // Verificar si es otro jugador
+        PlayerNetwork otherPlayer = collision.gameObject.GetComponent<PlayerNetwork>();
+        if (otherPlayer != null)
+        {
+            Debug.Log($"[PLAYER_{playerUniqueId}] ¡COLISIÓN! con {collision.gameObject.name}");
+            
+            // Solicitar al servidor que procese la colisión (solo desde el propietario del objeto)
+            if (IsOwner)
+            {
+                HandleCollisionServerRpc(otherPlayer.OwnerClientId);
+            }
+        }
+    }
+    
+    [ServerRpc]
+    private void HandleCollisionServerRpc(ulong otherPlayerId)
+    {
+        // Obtener el objeto del otro jugador usando el NetworkManager
+        NetworkObject otherPlayerObj = NetworkManager.Singleton.ConnectedClients[otherPlayerId].PlayerObject;
+        
+        if (otherPlayerObj != null)
+        {
+            PlayerNetwork otherPlayer = otherPlayerObj.GetComponent<PlayerNetwork>();
+            
+            if (otherPlayer != null)
+            {
+                // Cálculo de dirección de repulsión
+                Vector3 repulsionDirection = (transform.position - otherPlayerObj.transform.position).normalized;
+                repulsionDirection.y = 0; // Mantener la repulsión en el plano horizontal
+                
+                // Aplicar repulsión
+                ApplyRepulsionClientRpc(repulsionDirection * repulsionForce);
+                otherPlayer.ApplyRepulsionClientRpc(-repulsionDirection * repulsionForce);
+                
+                // Aturdir a ambos jugadores
+                SetStunStatusServerRpc(true);
+                otherPlayer.SetStunStatusServerRpc(true);
+                
+                // Aplicar daño si existe el componente PlayerStats
+                // Aquí podrías agregar lógica adicional para ajustar el daño según habilidades, etc.
+                float damage = collisionDamage;
+                
+                // Aplicar efecto visual (opcional)
+                SpawnCollisionEffectClientRpc(transform.position + (repulsionDirection * 0.5f));
+            }
+        }
+    }
+    
+    [ServerRpc]
+    private void SetStunStatusServerRpc(bool status)
+    {
+        // Actualizar la variable de red
+        isStunned.Value = status;
+        
+        // Si estamos aturdiendo al jugador
+        if (status)
+        {
+            // Iniciar temporizador para quitar el aturdimiento después de un tiempo
+            StartCoroutine(RemoveStunAfterDelay(collisionStunDuration));
+        }
+    }
+    
+    private IEnumerator RemoveStunAfterDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        
+        // Solo ejecutar si todavía estamos aturdidos
+        if (isStunned.Value)
+        {
+            isStunned.Value = false;
+        }
+    }
+    
+    [ClientRpc]
+    private void ApplyRepulsionClientRpc(Vector3 force)
+    {
+        // Si soy el propietario, aplicar la fuerza al rigidbody
+        if (IsOwner && rb != null)
+        {
+            // Detener el movimiento actual
+            isMovingToTarget = false;
+            
+            // Aplicar la fuerza de repulsión
+            rb.velocity = Vector3.zero;
+            rb.AddForce(force, ForceMode.Impulse);
+            
+            Debug.Log($"[PLAYER_{playerUniqueId}] Aplicando fuerza de repulsión: {force.magnitude} en dirección {force.normalized}");
+            
+            // Comenzar a sincronizar posición continuamente después de la colisión
+            StartCoroutine(SyncPositionAfterCollision());
+        }
+    }
+    
+    private IEnumerator SyncPositionAfterCollision()
+    {
+        float syncDuration = 3.0f; // Sincronizar durante 3 segundos después de la colisión
+        float syncInterval = 0.05f; // Intervalo de sincronización en segundos
+        float timer = 0f;
+        
+        while (timer < syncDuration)
+        {
+            // Sincronizar posición y rotación actual con el servidor
+            if (IsOwner)
+            {
+                UpdatePositionServerRpc(transform.position, transform.rotation);
+            }
+            
+            yield return new WaitForSeconds(syncInterval);
+            timer += syncInterval;
+        }
+    }
+    
+    [ClientRpc]
+    private void SpawnCollisionEffectClientRpc(Vector3 position)
+    {
+        // Solo crear el efecto visual si tenemos un prefab asignado
+        if (collisionEffectPrefab != null)
+        {
+            Instantiate(collisionEffectPrefab, position, Quaternion.identity);
+        }
+    }
+    
     [ServerRpc]
     private void UpdatePositionServerRpc(Vector3 newPosition, Quaternion newRotation)
     {
@@ -351,6 +488,9 @@ public class PlayerNetwork : NetworkBehaviour
     public override void OnNetworkDespawn()
     {
         Debug.Log($"[PLAYER_{playerUniqueId}] OnNetworkDespawn - IsLocalPlayer: {IsLocalPlayer}");
+        
+        // Desuscribirse del evento de cambio de isStunned
+        isStunned.OnValueChanged -= OnStunnedValueChanged;
         
         if (IsLocalPlayer)
         {
