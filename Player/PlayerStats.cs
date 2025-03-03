@@ -25,15 +25,24 @@ public class PlayerStats : NetworkBehaviour
         NetworkVariableReadPermission.Everyone,
         NetworkVariableWritePermission.Server);
     
+    // Variables para manejar reducción de daño por escudos, etc.
+    private NetworkVariable<float> damageReduction = new NetworkVariable<float>(
+        0f, // 0% reducción por defecto
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+    
     // Eventos para notificar cambios en vida y maná
     public event Action<float, float> OnHealthChanged; // current, max
     public event Action<float, float> OnManaChanged; // current, max
+    public event Action<float> OnTakeDamage; // amount before reduction
+    public event Action<float> OnDamageReductionChanged; // current reduction factor
 
     // Propiedades para acceder a los valores
     public float CurrentHealth => networkHealth.Value;
     public float MaxHealth => maxHealth;
     public float CurrentMana => networkMana.Value;
     public float MaxMana => maxMana;
+    public float CurrentDamageReduction => damageReduction.Value;
     
     // Variables para controlar la regeneración
     private float lastRegenTime;
@@ -45,6 +54,7 @@ public class PlayerStats : NetworkBehaviour
         {
             networkHealth.Value = maxHealth;
             networkMana.Value = maxMana;
+            damageReduction.Value = 0f;
             
             Debug.Log($"[PlayerStats] Jugador {OwnerClientId} inicializado con {maxHealth} HP y {maxMana} MP");
         }
@@ -52,6 +62,7 @@ public class PlayerStats : NetworkBehaviour
         // Suscribirse a cambios en las variables de red
         networkHealth.OnValueChanged += OnHealthValueChanged;
         networkMana.OnValueChanged += OnManaValueChanged;
+        damageReduction.OnValueChanged += OnDamageReductionValueChanged;
         
         // Inicializar tiempo para regeneración
         lastRegenTime = Time.time;
@@ -59,6 +70,7 @@ public class PlayerStats : NetworkBehaviour
         // Notificar valores iniciales a la UI
         OnHealthChanged?.Invoke(networkHealth.Value, maxHealth);
         OnManaChanged?.Invoke(networkMana.Value, maxMana);
+        OnDamageReductionChanged?.Invoke(damageReduction.Value);
     }
     
     public override void OnNetworkDespawn()
@@ -66,6 +78,7 @@ public class PlayerStats : NetworkBehaviour
         // Desuscribirse de eventos
         networkHealth.OnValueChanged -= OnHealthValueChanged;
         networkMana.OnValueChanged -= OnManaValueChanged;
+        damageReduction.OnValueChanged -= OnDamageReductionValueChanged;
     }
     
     private void Update()
@@ -114,17 +127,29 @@ public class PlayerStats : NetworkBehaviour
         // Notificar a los componentes que se han suscrito al evento
         OnManaChanged?.Invoke(newValue, maxMana);
     }
+    
+    private void OnDamageReductionValueChanged(float previousValue, float newValue)
+    {
+        OnDamageReductionChanged?.Invoke(newValue);
+        Debug.Log($"[PlayerStats] Reducción de daño del jugador {OwnerClientId} cambió de {previousValue*100}% a {newValue*100}%");
+    }
 
     // Método para que el servidor aplique daño al jugador
     public void TakeDamage(float amount)
     {
         if (!IsServer) return; // Solo el servidor puede modificar directamente estos valores
         
+        // Notificar del daño inicial (antes de reducciones)
+        OnTakeDamage?.Invoke(amount);
+        
+        // Aplicar reducción de daño si hay alguna activa
+        float reducedAmount = amount * (1f - damageReduction.Value);
+        
         // Calcular nueva salud y asegurar que no baje de 0
-        float newHealth = Mathf.Max(networkHealth.Value - amount, 0f);
+        float newHealth = Mathf.Max(networkHealth.Value - reducedAmount, 0f);
         networkHealth.Value = newHealth;
         
-        Debug.Log($"[PlayerStats] Jugador {OwnerClientId} recibió {amount} de daño. Vida restante: {newHealth}");
+        Debug.Log($"[PlayerStats] Jugador {OwnerClientId} recibió {amount} de daño (reducido a {reducedAmount}). Vida restante: {newHealth}");
     }
 
     // Método para que el servidor consuma maná
@@ -161,6 +186,31 @@ public class PlayerStats : NetworkBehaviour
         float newMana = Mathf.Min(networkMana.Value + amount, maxMana);
         networkMana.Value = newMana;
     }
+    
+    // Método para establecer la reducción de daño
+    public void SetDamageReduction(float reduction)
+    {
+        if (!IsServer)
+        {
+            SetDamageReductionServerRpc(reduction);
+            return;
+        }
+        
+        // Clamping entre 0 y 1 (0% a 100%)
+        damageReduction.Value = Mathf.Clamp01(reduction);
+    }
+    
+    // Método para restablecer la reducción de daño a 0
+    public void ResetDamageReduction()
+    {
+        if (!IsServer)
+        {
+            ResetDamageReductionServerRpc();
+            return;
+        }
+        
+        damageReduction.Value = 0f;
+    }
 
     // Permitir a los clientes solicitar tomar daño (para pruebas)
     [ServerRpc]
@@ -188,5 +238,18 @@ public class PlayerStats : NetworkBehaviour
     public void RestoreManaServerRpc(float amount)
     {
         RestoreMana(amount);
+    }
+    
+    // ServerRpc para modificar reducción de daño
+    [ServerRpc]
+    private void SetDamageReductionServerRpc(float reduction)
+    {
+        SetDamageReduction(reduction);
+    }
+    
+    [ServerRpc]
+    private void ResetDamageReductionServerRpc()
+    {
+        ResetDamageReduction();
     }
 }

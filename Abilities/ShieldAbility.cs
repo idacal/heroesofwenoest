@@ -3,7 +3,7 @@ using UnityEngine;
 using System.Collections;
 
 namespace PlayerAbilities
-
+{
 public class ShieldAbility : BaseAbility
 {
     [Header("Configuración de Escudo")]
@@ -53,12 +53,9 @@ public class ShieldAbility : BaseAbility
             activeShieldEffect.transform.parent = networkOwner.transform;
         }
         
-        // Registrar el escudo con el sistema de daño del jugador
-        PlayerStats playerStats = networkOwner.GetComponent<PlayerStats>();
-        if (playerStats != null)
-        {
-            playerStats.SetDamageReduction(damageReduction);
-        }
+        // Aplicar reducción de daño usando PlayerStats
+        // Esto funciona para la versión modificada de PlayerStats
+        playerStats.SetDamageReduction(damageReduction);
         
         if (networkOwner.IsOwner)
         {
@@ -91,12 +88,9 @@ public class ShieldAbility : BaseAbility
             activeShieldEffect = null;
         }
         
-        // Restaurar sistema de daño normal
-        PlayerStats playerStats = networkOwner.GetComponent<PlayerStats>();
-        if (playerStats != null)
-        {
-            playerStats.ResetDamageReduction();
-        }
+        // Eliminar reducción de daño
+        // Esto funciona para la versión modificada de PlayerStats
+        playerStats.ResetDamageReduction();
         
         if (networkOwner.IsOwner)
         {

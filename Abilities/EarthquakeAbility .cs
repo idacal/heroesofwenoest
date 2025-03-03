@@ -3,7 +3,7 @@ using UnityEngine;
 using System.Collections;
 
 namespace PlayerAbilities
-
+{
 public class EarthquakeAbility : BaseAbility
 {
     [Header("Configuración de Terremoto")]
@@ -318,4 +318,5 @@ public class EarthquakeAbility : BaseAbility
     public bool IsJumping => isJumping;
     public bool IsFalling => isFalling;
     public bool IsInImpactPause => isInImpactPause;
+}
 }

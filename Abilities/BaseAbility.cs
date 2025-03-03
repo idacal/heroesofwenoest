@@ -3,7 +3,7 @@ using UnityEngine;
 using System.Collections;
 
 namespace PlayerAbilities
-
+{
 public abstract class BaseAbility : MonoBehaviour
 {
     [Header("Configuración Básica")]

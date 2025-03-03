@@ -3,7 +3,7 @@ using UnityEngine;
 using System.Collections;
 
 namespace PlayerAbilities
-
+{
 public class DashAbility : BaseAbility
 {
     [Header("Configuración de Dash")]
