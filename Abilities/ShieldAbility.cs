@@ -9,12 +9,13 @@ public class ShieldAbility : BaseAbility
     [Header("Configuración de Escudo")]
     [SerializeField] private float shieldDuration = 5f;
     [SerializeField] private float damageReduction = 0.5f; // 50% de reducción de daño
-    [SerializeField] private GameObject shieldEffectPrefab;
     
     // Estado del escudo
     private bool isShieldActive = false;
-    private GameObject activeShieldEffect = null;
     private float shieldEndTime = 0f;
+    
+    // Componente de efecto visual
+    private SimpleShieldEffect visualEffect;
     
     public override void Initialize(NetworkBehaviour owner)
     {
@@ -42,19 +43,16 @@ public class ShieldAbility : BaseAbility
     
     public override void Activate()
     {
+        Debug.Log($"[ShieldAbility] Activando escudo con cooldown de {cooldown} segundos");
+        
         // Activar el escudo
         isShieldActive = true;
         shieldEndTime = Time.time + shieldDuration;
         
-        // Crear efecto visual
-        if (shieldEffectPrefab != null)
-        {
-            activeShieldEffect = Instantiate(shieldEffectPrefab, networkOwner.transform.position, Quaternion.identity);
-            activeShieldEffect.transform.parent = networkOwner.transform;
-        }
+        // Activar efecto visual en todos los clientes
+        ActivateVisualEffectServerRpc();
         
         // Aplicar reducción de daño usando PlayerStats
-        // Esto funciona para la versión modificada de PlayerStats
         playerStats.SetDamageReduction(damageReduction);
         
         if (networkOwner.IsOwner)
@@ -63,7 +61,28 @@ public class ShieldAbility : BaseAbility
         }
         
         // Iniciar corrutina para desactivar automáticamente
-        networkOwner.StartCoroutine(DeactivateShieldAfterDuration());
+        StartCoroutine(DeactivateShieldAfterDuration());
+    }
+    
+    [ServerRpc(RequireOwnership = false)]
+    private void ActivateVisualEffectServerRpc()
+    {
+        ActivateVisualEffectClientRpc();
+    }
+    
+    [ClientRpc]
+    private void ActivateVisualEffectClientRpc()
+    {
+        // Si ya hay un efecto visual, eliminarlo primero
+        if (visualEffect != null)
+        {
+            Destroy(visualEffect);
+        }
+        
+        // Añadir el componente de efecto visual
+        visualEffect = networkOwner.gameObject.AddComponent<SimpleShieldEffect>();
+        
+        Debug.Log("Efecto visual de escudo activado en cliente");
     }
     
     private IEnumerator DeactivateShieldAfterDuration()
@@ -79,23 +98,43 @@ public class ShieldAbility : BaseAbility
     
     private void DeactivateShield()
     {
+        Debug.Log($"[ShieldAbility] Desactivando escudo e iniciando cooldown de {cooldown} segundos");
+        
         isShieldActive = false;
         
-        // Eliminar efecto visual
-        if (activeShieldEffect != null)
-        {
-            Destroy(activeShieldEffect);
-            activeShieldEffect = null;
-        }
+        // Desactivar efecto visual en todos los clientes
+        DeactivateVisualEffectServerRpc();
         
         // Eliminar reducción de daño
-        // Esto funciona para la versión modificada de PlayerStats
         playerStats.ResetDamageReduction();
+        
+        // AQUÍ ESTABA FALTANDO ESTA LÍNEA IMPORTANTE
+        // Iniciar el cooldown de la habilidad
+        networkOwner.StartCoroutine(StartCooldown());
         
         if (networkOwner.IsOwner)
         {
             Debug.Log("Escudo desactivado");
         }
+    }
+    
+    [ServerRpc(RequireOwnership = false)]
+    private void DeactivateVisualEffectServerRpc()
+    {
+        DeactivateVisualEffectClientRpc();
+    }
+    
+    [ClientRpc]
+    private void DeactivateVisualEffectClientRpc()
+    {
+        // Eliminar el componente de efecto visual
+        if (visualEffect != null)
+        {
+            Destroy(visualEffect);
+            visualEffect = null;
+        }
+        
+        Debug.Log("Efecto visual de escudo desactivado en cliente");
     }
     
     public override void UpdateAbility()
@@ -119,10 +158,11 @@ public class ShieldAbility : BaseAbility
             DeactivateShield();
         }
         
-        // Eliminar cualquier referencia o efecto pendiente
-        if (activeShieldEffect != null)
+        // Eliminar cualquier efecto visual residual
+        if (visualEffect != null)
         {
-            Destroy(activeShieldEffect);
+            Destroy(visualEffect);
+            visualEffect = null;
         }
     }
     
