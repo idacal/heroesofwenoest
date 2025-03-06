@@ -4,17 +4,17 @@ public class MOBACamera : MonoBehaviour
 {
     [Header("Camera Configuration")]
     [SerializeField] private Transform target;
-    [SerializeField] private float cameraHeight = 15f;
-    [SerializeField] private float cameraDistance = 12f;
-    [SerializeField] private float cameraPitch = 45f; // Ángulo en grados (45° típico para MOBAs)
+    [SerializeField] private float cameraHeight = 18f;       // Aumentado de 15f a 18f
+    [SerializeField] private float cameraDistance = 14f;     // Aumentado de 12f a 14f
+    [SerializeField] private float cameraPitch = 60f;        // Cambiado de 45f a 60f para mayor inclinación
     
     [Header("Movement")]
     [SerializeField] private float edgeScrollSpeed = 15.0f;
     [SerializeField] private float edgeScrollThreshold = 20.0f;
     [SerializeField] private bool useEdgeScrolling = true;
     [SerializeField] private float mouseWheelZoomSpeed = 5.0f;
-    [SerializeField] private Vector2 heightZoomRange = new Vector2(8f, 25f); // Min, Max altura
-    [SerializeField] private Vector2 distanceZoomRange = new Vector2(8f, 20f); // Min, Max distancia
+    [SerializeField] private Vector2 heightZoomRange = new Vector2(12f, 28f); // Ajustado a 12-28 para estar más alto
+    [SerializeField] private Vector2 distanceZoomRange = new Vector2(10f, 22f); // Ajustado a 10-22 para mayor distancia
     [SerializeField] private float snapToTargetSpeed = 8.0f;
     
     [Header("Map Boundaries")]
@@ -65,24 +65,24 @@ public class MOBACamera : MonoBehaviour
         Debug.Log($"[CAMERA] Inicializando cámara con ID único: {cameraId}");
     }
     
-private void Start()
-{
-    // Rotación inicial (personalizada según tus especificaciones)
-    transform.rotation = Quaternion.Euler(45f, 0f, 0f);
-    
-    // Inicializar posición de la cámara
-    if (target != null)
+    private void Start()
     {
-        cameraTargetPosition = target.position;
+        // Rotación inicial (ajustada a 60 grados para un ángulo más pronunciado)
+        transform.rotation = Quaternion.Euler(cameraPitch, 0f, 0f);
+        
+        // Inicializar posición de la cámara
+        if (target != null)
+        {
+            cameraTargetPosition = target.position;
+        }
+        else
+        {
+            // Sin target, usar posición específica
+            cameraTargetPosition = new Vector3(0f, 10f, -8f);
+        }
+        
+        UpdateCameraPosition(false); // Posicionamiento inmediato
     }
-    else
-    {
-        // Sin target, usar posición específica
-        cameraTargetPosition = new Vector3(0f, 10f, -8f);
-    }
-    
-    UpdateCameraPosition(false); // Posicionamiento inmediato
-}
     
     private void LateUpdate()
     {
@@ -241,8 +241,8 @@ private void Start()
         float currentHeight = Mathf.Lerp(heightZoomRange.x, heightZoomRange.y, currentZoomFactor);
         float currentDistance = Mathf.Lerp(distanceZoomRange.x, distanceZoomRange.y, currentZoomFactor);
         
-        // Calcular ángulo basado en el factor de zoom (opcional, para un efecto más MOBA)
-        // float currentPitch = Mathf.Lerp(60f, 30f, currentZoomFactor); // Más cercano = más empinado
+        // Ajustar ángulo basado en el factor de zoom para un efecto más MOBA
+        float currentPitch = Mathf.Lerp(65f, 55f, currentZoomFactor); // Más cercano = más empinado
         
         // Calcular posición deseada usando parámetros actuales
         Vector3 directionFromTarget = new Vector3(0, 0, -1); // Dirección base (hacia -Z)
@@ -264,10 +264,10 @@ private void Start()
             transform.position = desiredPosition;
         }
         
-        // Si quieres ajustar también el ángulo con el zoom, descomenta esto:
-        // transform.rotation = Quaternion.Lerp(transform.rotation, 
-        //                                     Quaternion.Euler(currentPitch, transform.eulerAngles.y, 0),
-        //                                     Time.deltaTime * 5f);
+        // Ajustar también el ángulo con el zoom
+        transform.rotation = Quaternion.Lerp(transform.rotation, 
+                                             Quaternion.Euler(currentPitch, transform.eulerAngles.y, 0),
+                                             Time.deltaTime * 5f);
     }
     
     // Método público para asignar un objetivo

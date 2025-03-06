@@ -65,7 +65,10 @@ public class AbilityPowerUp : NetworkBehaviour
             if (player.OwnerClientId == playerId)
             {
                 // Añadir la habilidad según el tipo
-                AddAbilityToPlayer(player);
+                BaseAbility addedAbility = AddAbilityToPlayer(player);
+                
+                // También actualizar el sistema de UI a través de PlayerAbility
+                UpdatePlayerAbilityReference(player, addedAbility);
                 
                 // Si hay duración limitada, programar su eliminación
                 if (activeDuration > 0)
@@ -78,22 +81,46 @@ public class AbilityPowerUp : NetworkBehaviour
         }
     }
     
-    private void AddAbilityToPlayer(PlayerAbilityController controller)
+    private BaseAbility AddAbilityToPlayer(PlayerAbilityController controller)
     {
+        BaseAbility addedAbility = null;
+        
         switch (powerUpType)
         {
             case PowerUpType.Shield:
-                controller.AddAbility<ShieldAbility>();
+                addedAbility = controller.AddAbility<ShieldAbility>();
+                Debug.Log($"[AbilityPowerUp] Shield ability added to {controller.gameObject.name}");
                 break;
                 
             case PowerUpType.UltimateBomb:
                 // Ejemplo de otra habilidad que podrías implementar
-                // controller.AddAbility<UltimateBombAbility>();
+                // addedAbility = controller.AddAbility<UltimateBombAbility>();
                 break;
                 
             default:
                 Debug.LogWarning("Tipo de power-up no implementado: " + powerUpType);
                 break;
+        }
+        
+        return addedAbility;
+    }
+    
+    // Este método es nuevo - conecta la habilidad adquirida con el sistema de UI
+    private void UpdatePlayerAbilityReference(PlayerAbilityController controller, BaseAbility addedAbility)
+    {
+        if (addedAbility == null) return;
+        
+        // Buscar el componente PlayerAbility que gestiona la UI
+        PlayerAbility playerAbility = controller.GetComponent<PlayerAbility>();
+        if (playerAbility != null)
+        {
+            // Registrar la nueva habilidad en el sistema que maneja la UI
+            playerAbility.RegisterPowerUpAbility(addedAbility, (int)powerUpType + 2); // +2 porque 0 y 1 son dash y earthquake
+            Debug.Log($"[AbilityPowerUp] Registered {addedAbility.abilityName} in UI system at slot {(int)powerUpType + 2}");
+        }
+        else
+        {
+            Debug.LogWarning("[AbilityPowerUp] No PlayerAbility component found for UI integration");
         }
     }
     
@@ -106,11 +133,26 @@ public class AbilityPowerUp : NetworkBehaviour
         {
             case PowerUpType.Shield:
                 controller.RemoveAbility<ShieldAbility>();
+                
+                // También actualizar el sistema de UI
+                RemoveAbilityFromPlayerAbility(controller);
                 break;
                 
             case PowerUpType.UltimateBomb:
                 // controller.RemoveAbility<UltimateBombAbility>();
+                // RemoveAbilityFromPlayerAbility(controller);
                 break;
+        }
+    }
+    
+    // Este método es nuevo - desregistra la habilidad del sistema de UI
+    private void RemoveAbilityFromPlayerAbility(PlayerAbilityController controller)
+    {
+        PlayerAbility playerAbility = controller.GetComponent<PlayerAbility>();
+        if (playerAbility != null)
+        {
+            playerAbility.UnregisterPowerUpAbility((int)powerUpType + 2);
+            Debug.Log($"[AbilityPowerUp] Unregistered ability from UI system at slot {(int)powerUpType + 2}");
         }
     }
 }

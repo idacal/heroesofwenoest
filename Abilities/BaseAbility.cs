@@ -76,8 +76,8 @@ public abstract class BaseAbility : MonoBehaviour
         }
     }
     
-    // Obtener tiempo restante de cooldown
-    public float GetRemainingCooldown()
+    // Obtener tiempo restante de cooldown - HACERLO VIRTUAL para que pueda sobrescribirse
+    public virtual float GetRemainingCooldown()
     {
         if (!isReady)
         {

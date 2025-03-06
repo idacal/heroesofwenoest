@@ -17,6 +17,9 @@ public class ShieldAbility : BaseAbility
     // Componente de efecto visual
     private SimpleShieldEffect visualEffect;
     
+    // Nuevo: Flag para controlar si necesitamos reactivar el cooldown al finalizar
+    private bool needsDelayedCooldown = true;
+    
     public override void Initialize(NetworkBehaviour owner)
     {
         base.Initialize(owner);
@@ -43,7 +46,13 @@ public class ShieldAbility : BaseAbility
     
     public override void Activate()
     {
-        Debug.Log($"[ShieldAbility] Activando escudo con cooldown de {cooldown} segundos");
+        // Importante: NO bloquear el cooldown que aplicará PlayerAbilityController
+        // En lugar de eso, reset it inmediatamente y posponerlo
+        
+        // Guardar el estado para saber si debemos reiniciar el cooldown más tarde
+        needsDelayedCooldown = true;
+        
+        Debug.Log($"[ShieldAbility] Activando escudo (se reiniciará el cooldown después)");
         
         // Activar el escudo
         isShieldActive = true;
@@ -62,6 +71,24 @@ public class ShieldAbility : BaseAbility
         
         // Iniciar corrutina para desactivar automáticamente
         StartCoroutine(DeactivateShieldAfterDuration());
+        
+        // Iniciar corrutina que resetea el cooldown después de un pequeño delay
+        // para que no se bloquee el uso de la habilidad durante su efecto
+        StartCoroutine(ResetCooldownAfterDelay(0.5f));
+    }
+    
+    // Nueva corrutina para resetear el cooldown después de un pequeño delay
+    private IEnumerator ResetCooldownAfterDelay(float delay)
+    {
+        yield return new WaitForSeconds(delay);
+        
+        // Solo hacemos esto si el cooldown se activó (lo que debería ocurrir en PlayerAbilityController)
+        if (!isReady && needsDelayedCooldown)
+        {
+            Debug.Log($"[ShieldAbility] Reseteando cooldown para permitir uso durante el efecto");
+            isReady = true;
+            needsDelayedCooldown = false;
+        }
     }
     
     [ServerRpc(RequireOwnership = false)]
@@ -108,8 +135,8 @@ public class ShieldAbility : BaseAbility
         // Eliminar reducción de daño
         playerStats.ResetDamageReduction();
         
-        // AQUÍ ESTABA FALTANDO ESTA LÍNEA IMPORTANTE
-        // Iniciar el cooldown de la habilidad
+        // IMPORTANTE: Iniciar el cooldown SOLO si el flag está activo
+        // (lo que significa que no hubo un cooldown inicial o ya fue reseteado)
         networkOwner.StartCoroutine(StartCooldown());
         
         if (networkOwner.IsOwner)

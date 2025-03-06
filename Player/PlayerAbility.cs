@@ -34,6 +34,9 @@ public class PlayerAbility : NetworkBehaviour
     private DashAbility dashAbility;
     private EarthquakeAbility earthquakeAbility;
     private ShieldAbility shieldAbility;
+    
+    // Tabla para mapear habilidades del powerup a slots del array abilities
+    private BaseAbility[] powerUpAbilities = new BaseAbility[2]; // Posiciones 2 y 3 del array abilities
 
     private void Awake()
     {
@@ -98,7 +101,14 @@ public class PlayerAbility : NetworkBehaviour
         // Obtener referencias a las habilidades específicas
         dashAbility = GetComponent<DashAbility>();
         earthquakeAbility = GetComponent<EarthquakeAbility>();
+        
+        // Buscar si ya existe el ShieldAbility (puede haber sido añadido antes)
         shieldAbility = GetComponent<ShieldAbility>();
+        if (shieldAbility != null)
+        {
+            // Si ya existe, registrarlo
+            RegisterPowerUpAbility(shieldAbility, 2);
+        }
         
         // Sincronizar información de habilidades con el nuevo sistema
         SyncAbilityInfo();
@@ -125,14 +135,36 @@ public class PlayerAbility : NetworkBehaviour
                 abilities[1].cooldownEndTime = Time.time + earthquakeAbility.GetRemainingCooldown();
             }
             
-            if (shieldAbility != null)
-            {
-                abilities[2].isReady = shieldAbility.isReady;
-                abilities[2].cooldownEndTime = Time.time + shieldAbility.GetRemainingCooldown();
-            }
+            // Actualizar las habilidades de powerup registradas
+            UpdatePowerUpAbilitiesState();
             
             // Actualizar cada 0.1 segundos es suficiente para la UI
             yield return new WaitForSeconds(0.1f);
+        }
+    }
+    
+    // NUEVO MÉTODO: Actualiza el estado de las habilidades adquiridas por powerup
+    private void UpdatePowerUpAbilitiesState()
+    {
+        for (int i = 0; i < powerUpAbilities.Length; i++)
+        {
+            if (powerUpAbilities[i] != null)
+            {
+                int abilitySlot = i + 2; // +2 porque 0 y 1 son dash y earthquake
+                
+                // Asegurar que el slot existe en el array de abilities
+                if (abilitySlot < abilities.Length && abilities[abilitySlot] != null)
+                {
+                    abilities[abilitySlot].isReady = powerUpAbilities[i].isReady;
+                    abilities[abilitySlot].cooldownEndTime = Time.time + powerUpAbilities[i].GetRemainingCooldown();
+                    
+                    // Debugging
+                    if (IsOwner && powerUpAbilities[i].GetRemainingCooldown() > 0)
+                    {
+                        Debug.Log($"[PlayerAbility] Ability {powerUpAbilities[i].abilityName} cooldown: {powerUpAbilities[i].GetRemainingCooldown()} seconds");
+                    }
+                }
+            }
         }
     }
     
@@ -157,14 +189,79 @@ public class PlayerAbility : NetworkBehaviour
             earthquakeAbility.icon = abilities[1].icon;
         }
         
-        if (shieldAbility != null && abilities[2] != null)
+        // Sincronizar las habilidades de powerup si existen
+        SyncPowerUpAbilities();
+    }
+    
+    // NUEVO MÉTODO: Sincroniza las habilidades adquiridas por powerup
+    private void SyncPowerUpAbilities()
+    {
+        for (int i = 0; i < powerUpAbilities.Length; i++)
         {
-            shieldAbility.abilityName = abilities[2].name;
-            shieldAbility.activationKey = abilities[2].activationKey;
-            shieldAbility.manaCost = abilities[2].manaCost;
-            shieldAbility.cooldown = abilities[2].cooldown;
-            shieldAbility.icon = abilities[2].icon;
+            if (powerUpAbilities[i] != null)
+            {
+                int abilitySlot = i + 2; // +2 porque posiciones 0 y 1 son dash y earthquake
+                
+                if (abilitySlot < abilities.Length && abilities[abilitySlot] != null)
+                {
+                    // Transferir configuración entre sistemas
+                    powerUpAbilities[i].abilityName = abilities[abilitySlot].name;
+                    powerUpAbilities[i].activationKey = abilities[abilitySlot].activationKey;
+                    powerUpAbilities[i].manaCost = abilities[abilitySlot].manaCost;
+                    powerUpAbilities[i].cooldown = abilities[abilitySlot].cooldown;
+                    powerUpAbilities[i].icon = abilities[abilitySlot].icon;
+                    
+                    Debug.Log($"[PlayerAbility] Sincronizada info de {powerUpAbilities[i].abilityName} con cooldown {powerUpAbilities[i].cooldown}s");
+                }
+            }
         }
+    }
+    
+    // NUEVO MÉTODO: Registra una habilidad adquirida por powerup en el sistema
+    public void RegisterPowerUpAbility(BaseAbility ability, int slot)
+    {
+        if (slot < 2 || slot >= 4)
+        {
+            Debug.LogError($"[PlayerAbility] Slot inválido para habilidad de powerup: {slot}. Debe ser 2 o 3.");
+            return;
+        }
+        
+        int powerUpIndex = slot - 2;
+        powerUpAbilities[powerUpIndex] = ability;
+        
+        // Si es Shield específicamente, guardar referencia directa también
+        if (ability is ShieldAbility)
+        {
+            shieldAbility = ability as ShieldAbility;
+            Debug.Log("[PlayerAbility] ShieldAbility guardado en referencia directa");
+        }
+        
+        // Hacer una sincronización inmediata
+        SyncPowerUpAbilities();
+        
+        Debug.Log($"[PlayerAbility] Habilidad {ability.abilityName} registrada en slot {slot}");
+    }
+    
+    // NUEVO MÉTODO: Desregistra una habilidad de powerup
+    public void UnregisterPowerUpAbility(int slot)
+    {
+        if (slot < 2 || slot >= 4)
+        {
+            Debug.LogError($"[PlayerAbility] Slot inválido para eliminar: {slot}. Debe ser 2 o 3.");
+            return;
+        }
+        
+        int powerUpIndex = slot - 2;
+        
+        // Si es Shield, limpiar referencia directa
+        if (powerUpAbilities[powerUpIndex] is ShieldAbility)
+        {
+            shieldAbility = null;
+        }
+        
+        powerUpAbilities[powerUpIndex] = null;
+        
+        Debug.Log($"[PlayerAbility] Habilidad en slot {slot} desregistrada");
     }
     
     // Método público para verificar si el jugador está en pausa de impacto
@@ -207,9 +304,14 @@ public class PlayerAbility : NetworkBehaviour
                         return earthquakeAbility.GetRemainingCooldown();
                     break;
                     
-                case 2: // Escudo
-                    if (shieldAbility != null)
-                        return shieldAbility.GetRemainingCooldown();
+                case 2: // Escudo u otra habilidad de powerup
+                    if (powerUpAbilities[0] != null)
+                        return powerUpAbilities[0].GetRemainingCooldown();
+                    break;
+                    
+                case 3: // Ultimate u otra habilidad de powerup
+                    if (powerUpAbilities[1] != null)
+                        return powerUpAbilities[1].GetRemainingCooldown();
                     break;
             }
             
