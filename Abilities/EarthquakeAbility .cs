@@ -15,6 +15,10 @@ public class EarthquakeAbility : BaseAbility
     [SerializeField] private float earthquakeForce = 10f;     // Fuerza de empuje
     [SerializeField] private GameObject earthquakeEffectPrefab; // Efecto visual del terremoto
     [SerializeField] private LayerMask affectedLayers;        // Capas afectadas por el terremoto
+    
+    [Header("Requisitos de Activación")]
+    [SerializeField] private bool requireMovement = true;     // NUEVO: Requiere que el jugador esté en movimiento
+    [SerializeField] private float minMovementSpeed = 1.0f;   // NUEVO: Velocidad mínima para activar
 
     // Estado del terremoto - NetworkVariables para sincronización estricta
     private NetworkVariable<bool> networkIsJumping = new NetworkVariable<bool>(false, 
@@ -38,6 +42,12 @@ public class EarthquakeAbility : BaseAbility
     private NetworkVariable<Vector3> networkCurrentPosition = new NetworkVariable<Vector3>(
         Vector3.zero, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
     private bool syncingTransform = false;
+    
+    // Variables para seguimiento de movimiento - NUEVAS
+    private Vector3 lastPosition;
+    private float currentSpeed = 0f;
+    private float lastSpeedUpdateTime = 0f;
+    private float speedUpdateInterval = 0.1f; // Actualizar cada 0.1 segundos
     
     // Referencias a componentes externos
     private PlayerAbilityController abilityController;
@@ -66,6 +76,10 @@ public class EarthquakeAbility : BaseAbility
         {
             networkCurrentPosition.Value = networkOwner.transform.position;
         }
+        
+        // Inicializar variables de seguimiento de movimiento
+        lastPosition = networkOwner.transform.position;
+        lastSpeedUpdateTime = Time.time;
         
         Debug.Log($"[EarthquakeAbility] Inicializada en {owner.name}, IsOwner: {owner.IsOwner}, IsServer: {owner.IsServer}");
     }
@@ -188,15 +202,61 @@ public class EarthquakeAbility : BaseAbility
         }
     }
     
+    // MODIFICADO: Método para verificar si se puede activar la habilidad
     public override bool CanActivate()
     {
         // No permitir activar si ya estamos en medio de un salto o caída
         if (isJumping || isFalling || isInImpactPause)
         {
+            if (networkOwner.IsOwner)
+            {
+                Debug.Log("[EarthquakeAbility] No se puede activar: ya está en uso");
+            }
             return false;
         }
         
+        // Verificar requisito de movimiento si está activado
+        if (requireMovement)
+        {
+            // Actualizar velocidad actual
+            UpdateCurrentSpeed();
+            
+            if (currentSpeed < minMovementSpeed)
+            {
+                if (networkOwner.IsOwner)
+                {
+                    Debug.Log($"[EarthquakeAbility] No se puede activar: velocidad insuficiente ({currentSpeed:F2} < {minMovementSpeed:F2})");
+                }
+                return false;
+            }
+        }
+        
+        // Verificar si hay suficiente maná y la habilidad está lista
         return isReady && playerStats.CurrentMana >= manaCost;
+    }
+    
+    // NUEVO: Método para actualizar la velocidad actual
+    private void UpdateCurrentSpeed()
+    {
+        // Actualizar velocidad cada cierto intervalo para evitar cálculos excesivos
+        if (Time.time - lastSpeedUpdateTime >= speedUpdateInterval)
+        {
+            // Calcular la distancia recorrida desde la última actualización
+            float distance = Vector3.Distance(networkOwner.transform.position, lastPosition);
+            
+            // Calcular velocidad (unidades por segundo)
+            currentSpeed = distance / speedUpdateInterval;
+            
+            // Actualizar última posición y tiempo
+            lastPosition = networkOwner.transform.position;
+            lastSpeedUpdateTime = Time.time;
+            
+            // Debug cada pocos segundos para no saturar
+            if (networkOwner.IsOwner && Time.frameCount % 300 == 0)
+            {
+                Debug.Log($"[EarthquakeAbility] Velocidad actual: {currentSpeed:F2} unidades/seg");
+            }
+        }
     }
     
     public override void Activate()
@@ -271,6 +331,12 @@ public class EarthquakeAbility : BaseAbility
         {
             Debug.Log($"[EarthquakeAbility] Estado actual: isJumping={isJumping}, isFalling={isFalling}, " +
                      $"isInImpactPause={isInImpactPause}, isReady={isReady}, syncingTransform={syncingTransform}");
+        }
+        
+        // Actualizar velocidad de movimiento cuando sea el propietario
+        if (networkOwner.IsOwner)
+        {
+            UpdateCurrentSpeed();
         }
         
         // Actualizar lógica del salto/terremoto si está activo
@@ -647,5 +713,12 @@ public class EarthquakeAbility : BaseAbility
     public bool IsJumping => isJumping;
     public bool IsFalling => isFalling;
     public bool IsInImpactPause => isInImpactPause;
+    public float CurrentSpeed => currentSpeed; // NUEVA: Exposición de la velocidad actual
+    
+    // NUEVO: Método público para verificar si se está moviendo lo suficientemente rápido
+    public bool IsMovingFastEnough()
+    {
+        return currentSpeed >= minMovementSpeed;
+    }
 }
 }

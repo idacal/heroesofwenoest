@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using PlayerAbilities;
 
 public class AbilityUIManager : MonoBehaviour
 {
@@ -11,6 +12,7 @@ public class AbilityUIManager : MonoBehaviour
         public Image cooldownOverlay; // Opcional, puedes dejarlo sin asignar
         public TextMeshProUGUI keyText;
         public TextMeshProUGUI cooldownText;
+        public Image requirementIcon; // NUEVO: Ícono para mostrar requisitos (como movimiento)
     }
 
     [Header("Referencias")]
@@ -23,12 +25,16 @@ public class AbilityUIManager : MonoBehaviour
     [SerializeField] private Color normalColor = Color.white;
     [SerializeField] private Color cooldownColor = new Color(0.5f, 0.5f, 0.5f, 0.7f);
     [SerializeField] private Color noManaColor = new Color(0.3f, 0.3f, 0.8f, 0.7f);
+    [SerializeField] private Color requirementNotMetColor = new Color(0.8f, 0.4f, 0.0f, 0.7f); // NUEVO: Color para requisitos no cumplidos
     
     [Header("Debug")]
     [SerializeField] private bool showDebugLogs = false;
 
     // Referencia al PlayerStats para verificar mana
     private PlayerStats playerStats;
+    
+    // NUEVO: Referencias directas a habilidades específicas
+    private EarthquakeAbility earthquakeAbility;
 
     private void Start()
     {
@@ -45,6 +51,12 @@ public class AbilityUIManager : MonoBehaviour
             if (abilityUIs[i].cooldownText != null)
             {
                 abilityUIs[i].cooldownText.gameObject.SetActive(false);
+            }
+            
+            // Ocultar íconos de requisitos inicialmente
+            if (abilityUIs[i].requirementIcon != null)
+            {
+                abilityUIs[i].requirementIcon.gameObject.SetActive(false);
             }
         }
         
@@ -63,6 +75,9 @@ public class AbilityUIManager : MonoBehaviour
                 {
                     playerAbility = player.GetComponent<PlayerAbility>();
                     playerStats = player.GetComponent<PlayerStats>();
+                    
+                    // NUEVO: Buscar referencia a EarthquakeAbility
+                    earthquakeAbility = player.GetComponent<EarthquakeAbility>();
                     
                     if (playerAbility != null && playerStats != null)
                     {
@@ -109,16 +124,33 @@ public class AbilityUIManager : MonoBehaviour
         float cooldownRemaining = playerAbility.GetRemainingCooldown(index);
         bool hasMana = playerStats.CurrentMana >= ability.manaCost;
         
+        // NUEVO: Verificar requisitos adicionales (por ahora, solo movimiento para Earthquake)
+        bool requirementsMet = true;
+        string requirementMessage = "";
+        
+        // Si es la habilidad de terremoto (índice 1 = W)
+        if (index == 1 && earthquakeAbility != null)
+        {
+            // Verificar si se cumple el requisito de movimiento
+            requirementsMet = earthquakeAbility.IsMovingFastEnough();
+            
+            if (!requirementsMet)
+            {
+                requirementMessage = "¡Muévete!";
+            }
+        }
+        
         // Debug logging
         if (showDebugLogs && Time.frameCount % 60 == 0)
         {
             Debug.Log($"[AbilityUIManager] Habilidad {index} ({ability.name}) - " +
                      $"En cooldown: {isInCooldown}, " +
                      $"Tiempo restante: {cooldownRemaining:F1}s, " +
-                     $"Tiene maná: {hasMana}");
+                     $"Tiene maná: {hasMana}, " +
+                     $"Requisitos cumplidos: {requirementsMet}");
         }
         
-        // Actualizar texto de cooldown (similar a IntegratedDashCooldown)
+        // Actualizar texto de cooldown
         if (ui.cooldownText != null)
         {
             if (isInCooldown)
@@ -134,8 +166,28 @@ public class AbilityUIManager : MonoBehaviour
             }
             else
             {
-                // Habilidad lista, ocultar texto
+                // Habilidad lista, ocultar texto de cooldown
                 ui.cooldownText.gameObject.SetActive(false);
+            }
+        }
+        
+        // NUEVO: Mostrar ícono de requisito si no se cumplen los requisitos
+        if (ui.requirementIcon != null)
+        {
+            if (!requirementsMet)
+            {
+                ui.requirementIcon.gameObject.SetActive(true);
+                
+                // Si hay un texto en el ícono, actualizarlo
+                TextMeshProUGUI iconText = ui.requirementIcon.GetComponentInChildren<TextMeshProUGUI>();
+                if (iconText != null)
+                {
+                    iconText.text = requirementMessage;
+                }
+            }
+            else
+            {
+                ui.requirementIcon.gameObject.SetActive(false);
             }
         }
         
@@ -155,6 +207,12 @@ public class AbilityUIManager : MonoBehaviour
                 ui.cooldownOverlay.fillAmount = 1f;
                 ui.cooldownOverlay.color = noManaColor;
             }
+            else if (!requirementsMet)
+            {
+                // NUEVO: Requisitos no cumplidos
+                ui.cooldownOverlay.fillAmount = 1f;
+                ui.cooldownOverlay.color = requirementNotMetColor;
+            }
             else
             {
                 // Habilidad lista
@@ -165,7 +223,7 @@ public class AbilityUIManager : MonoBehaviour
         // Actualizar imagen principal
         if (ui.abilityImage != null)
         {
-            if (isInCooldown || !hasMana)
+            if (isInCooldown || !hasMana || !requirementsMet)
             {
                 ui.abilityImage.color = new Color(1f, 1f, 1f, 0.5f); // Semi-transparente
             }

@@ -125,6 +125,7 @@ public class PlayerAbilityController : NetworkBehaviour
                 // Verificar si la habilidad se puede activar
                 if (ability.CanActivate())
                 {
+                    Debug.Log($"Activando habilidad {ability.abilityName} a través de la tecla {ability.activationKey}");
                     UseAbilityServerRpc(activeAbilities.IndexOf(ability));
                 }
                 else if (!ability.isReady)
@@ -134,6 +135,27 @@ public class PlayerAbilityController : NetworkBehaviour
                 else if (playerStats.CurrentMana < ability.manaCost)
                 {
                     ability.OnFailed();
+                    Debug.Log($"Maná insuficiente para {ability.abilityName}. Necesitas {ability.manaCost}, tienes {playerStats.CurrentMana}");
+                }
+                else
+                {
+                    // NUEVO: Verificar si es el Earthquake para mostrar feedback sobre requisito de movimiento
+                    if (ability is EarthquakeAbility earthquakeAbility)
+                    {
+                        if (!earthquakeAbility.IsMovingFastEnough())
+                        {
+                            // Mostrar feedback específico para requisito de movimiento
+                            Debug.Log($"¡Necesitas estar en movimiento para usar {ability.abilityName}!");
+                            
+                            // Opcional: Efecto visual o sonoro para indicar el requisito
+                            ShowRequirementFeedback("Muévete para usar Terremoto");
+                        }
+                    }
+                    else
+                    {
+                        // Otro tipo de fallo no específico
+                        Debug.Log($"No se puede activar {ability.abilityName} por razones desconocidas");
+                    }
                 }
             }
             
@@ -146,6 +168,22 @@ public class PlayerAbilityController : NetworkBehaviour
         {
             MoveTowardsTarget();
         }
+    }
+    
+    // NUEVO: Método para mostrar feedback visual o de audio cuando no se cumplen requisitos
+    private void ShowRequirementFeedback(string message)
+    {
+        // Aquí puedes implementar efectos visuales, sonidos, o mensajes en pantalla
+        // Por ejemplo, podrías mostrar un texto flotante cerca del jugador
+        
+        Debug.Log($"[REQUISITO] {message}");
+        
+        // Si tienes un sistema de UI, puedes usarlo para mostrar un mensaje temporal
+        // Por ejemplo:
+        // UIManager.ShowTemporaryMessage(message, 2.0f);
+        
+        // También podrías reproducir un sonido de "error" o "requisito no cumplido"
+        // AudioManager.PlaySound("requirement_not_met");
     }
     
     private bool IsPerformingAnyAbility()

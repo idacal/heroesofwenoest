@@ -94,27 +94,52 @@ public class PlayerNetwork : NetworkBehaviour
     // Override para el spawn en red
     public override void OnNetworkSpawn()
     {
-        Debug.Log($"[PLAYER_{playerUniqueId}] OnNetworkSpawn - IsOwner: {IsOwner}, IsLocalPlayer: {IsLocalPlayer}, OwnerClientId: {OwnerClientId}");
+        Debug.Log($"[PLAYER_{playerUniqueId}] OnNetworkSpawn - IsOwner: {IsOwner}, IsLocalPlayer: {IsLocalPlayer}, OwnerClientId: {OwnerClientId}, Position: {transform.position}");
         
         // Inicializar posición y rotación en la red
         if (IsServer)
         {
+            // El servidor establece las variables de red iniciales
             networkPosition.Value = transform.position;
             networkRotation.Value = transform.rotation;
             isStunned.Value = false;
+            
+            Debug.Log($"[PLAYER_{playerUniqueId}] Servidor inicializó posición de red: {networkPosition.Value}");
         }
+        
+        // Suscribirse al cambio de la variable isStunned
+        isStunned.OnValueChanged += OnStunnedValueChanged;
+        
+        // Inicializar con un pequeño retraso para permitir sincronización 
+        StartCoroutine(DelayedInitialization());
+    }
+    
+    private IEnumerator DelayedInitialization()
+    {
+        // Pequeño retraso para permitir que la sincronización de red ocurra
+        yield return new WaitForSeconds(0.2f);
         
         // Solo el cliente local debe crear y gestionar su propia cámara
         if (IsLocalPlayer)
         {
-            Debug.Log($"[PLAYER_{playerUniqueId}] Configurando jugador local con ClientId: {OwnerClientId}");
+            Debug.Log($"[PLAYER_{playerUniqueId}] Configurando jugador local con ClientId: {OwnerClientId}, Posición: {transform.position}");
             
             // Inicializar posición objetivo con posición actual
             targetPosition = transform.position;
             lastPosition = transform.position;
             
+            // Si no somos el servidor, enviar nuestra posición actual para verificar
+            if (!IsServer)
+            {
+                Debug.Log($"[PLAYER_{playerUniqueId}] Cliente validando posición inicial: {transform.position}");
+                ValidatePositionServerRpc(transform.position);
+            }
+            
             // Pequeño delay para asegurar que todo está inicializado correctamente
-            Invoke("CreateLocalCamera", 0.2f);
+            yield return new WaitForSeconds(0.2f);
+            
+            // Crear cámara local
+            CreateLocalCamera();
             
             // Crear Indicator si está configurado
             if (clickIndicatorPrefab != null)
@@ -125,9 +150,73 @@ public class PlayerNetwork : NetworkBehaviour
             // Buscar referencia a la habilidad de terremoto
             StartCoroutine(FindEarthquakeAbility());
         }
+    }
+    
+    // NUEVO: Método para sincronizar transform inicial
+    [ServerRpc(RequireOwnership = false)]
+    public void SyncInitialTransformServerRpc(Vector3 position, Quaternion rotation)
+    {
+        // Sólo el servidor puede modificar las variables de red
+        if (!IsServer) return;
         
-        // Suscribirse al cambio de la variable isStunned
-        isStunned.OnValueChanged += OnStunnedValueChanged;
+        Debug.Log($"[PLAYER_{playerUniqueId}] SyncInitialTransformServerRpc: Servidor recibió solicitud para posición {position}");
+        
+        // Establecer la posición en el servidor
+        transform.position = position;
+        transform.rotation = rotation;
+        
+        // Actualizar las variables de red
+        networkPosition.Value = position;
+        networkRotation.Value = rotation;
+        
+        // Notificar a todos los clientes
+        SyncTransformClientRpc(position, rotation);
+    }
+    
+    [ClientRpc]
+    private void SyncTransformClientRpc(Vector3 position, Quaternion rotation)
+    {
+        Debug.Log($"[PLAYER_{playerUniqueId}] SyncTransformClientRpc: Cliente recibió posición {position}");
+        
+        // Establecer la posición en todos los clientes
+        transform.position = position;
+        transform.rotation = rotation;
+        
+        // Para el propietario, también actualizar la posición objetivo
+        if (IsOwner)
+        {
+            targetPosition = position;
+            lastPosition = position;
+            
+            // Detener cualquier movimiento en curso
+            isMovingToTarget = false;
+            
+            // Detener cualquier velocidad
+            if (rb != null)
+            {
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+        }
+    }
+    
+    // NUEVO: Método para validar la posición con el servidor
+    [ServerRpc]
+    private void ValidatePositionServerRpc(Vector3 clientPosition)
+    {
+        if (!IsServer) return;
+        
+        Debug.Log($"[PLAYER_{playerUniqueId}] ValidatePositionServerRpc: Cliente en {clientPosition}, Servidor tiene {networkPosition.Value}");
+        
+        // Calcular discrepancia
+        float discrepancy = Vector3.Distance(clientPosition, networkPosition.Value);
+        
+        // Si hay una discrepancia significativa, corregir
+        if (discrepancy > 0.5f)
+        {
+            Debug.LogWarning($"[PLAYER_{playerUniqueId}] Discrepancia detectada ({discrepancy}m)! Corrigiendo posición del cliente.");
+            SyncTransformClientRpc(networkPosition.Value, networkRotation.Value);
+        }
     }
     
     private IEnumerator FindEarthquakeAbility()
@@ -470,7 +559,6 @@ public class PlayerNetwork : NetworkBehaviour
                 // Cálculo de dirección de repulsión
                 Vector3 repulsionDirection = (transform.position - otherPlayerObj.transform.position).normalized;
                 repulsionDirection.y = 0; // Mantener la repulsión en el plano horizontal
-                
                 // Aplicar repulsión
                 ApplyRepulsionClientRpc(repulsionDirection * repulsionForce);
                 otherPlayer.ApplyRepulsionClientRpc(-repulsionDirection * repulsionForce);
