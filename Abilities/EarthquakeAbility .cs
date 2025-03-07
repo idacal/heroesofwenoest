@@ -17,8 +17,17 @@ public class EarthquakeAbility : BaseAbility
     [SerializeField] private LayerMask affectedLayers;        // Capas afectadas por el terremoto
     
     [Header("Requisitos de Activación")]
-    [SerializeField] private bool requireMovement = true;     // NUEVO: Requiere que el jugador esté en movimiento
-    [SerializeField] private float minMovementSpeed = 1.0f;   // NUEVO: Velocidad mínima para activar
+    [SerializeField] private bool requireMovement = true;     // Requiere que el jugador esté en movimiento
+    [SerializeField] private float minMovementSpeed = 1.0f;   // Velocidad mínima para activar
+
+    [Header("Salto Direccional")]
+    [SerializeField] private bool enableDirectionalJump = true;     // Habilitar salto en dirección del clic
+    [SerializeField] private float horizontalJumpDistance = 3.0f;   // Distancia horizontal máxima del salto
+    [SerializeField] private AnimationCurve horizontalMovementCurve = new AnimationCurve(
+        new Keyframe(0, 0, 0, 0),
+        new Keyframe(0.5f, 1.2f, 0, 0),  // Añadimos un "sobresalto" en el medio
+        new Keyframe(1, 1, 0, 0)
+    );
 
     // Estado del terremoto - NetworkVariables para sincronización estricta
     private NetworkVariable<bool> networkIsJumping = new NetworkVariable<bool>(false, 
@@ -29,6 +38,10 @@ public class EarthquakeAbility : BaseAbility
         NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
     private NetworkVariable<Vector3> networkJumpStartPosition = new NetworkVariable<Vector3>(
         Vector3.zero, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
+    private NetworkVariable<Vector3> networkJumpDirection = new NetworkVariable<Vector3>(
+        Vector3.zero, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
+    private NetworkVariable<Vector3> networkJumpTargetPosition = new NetworkVariable<Vector3>(
+        Vector3.zero, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
     
     // Variables locales para seguimiento de animación
     private bool isJumping = false;
@@ -38,12 +51,16 @@ public class EarthquakeAbility : BaseAbility
     private Vector3 jumpHighestPosition;
     private float jumpTime = 0f;
     
+    // Variables para el salto direccional
+    private Vector3 jumpDirection = Vector3.zero;
+    private Vector3 jumpTargetPosition;
+    
     // Control de posición manual
     private NetworkVariable<Vector3> networkCurrentPosition = new NetworkVariable<Vector3>(
         Vector3.zero, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Owner);
     private bool syncingTransform = false;
     
-    // Variables para seguimiento de movimiento - NUEVAS
+    // Variables para seguimiento de movimiento
     private Vector3 lastPosition;
     private float currentSpeed = 0f;
     private float lastSpeedUpdateTime = 0f;
@@ -70,6 +87,8 @@ public class EarthquakeAbility : BaseAbility
         networkIsInImpactPause.OnValueChanged += OnImpactPauseChanged;
         networkJumpStartPosition.OnValueChanged += OnJumpStartPositionChanged;
         networkCurrentPosition.OnValueChanged += OnCurrentPositionChanged;
+        networkJumpDirection.OnValueChanged += OnJumpDirectionChanged;
+        networkJumpTargetPosition.OnValueChanged += OnJumpTargetPositionChanged;
         
         // Establecer posición inicial
         if (networkOwner.IsOwner)
@@ -92,6 +111,8 @@ public class EarthquakeAbility : BaseAbility
         networkIsInImpactPause.OnValueChanged -= OnImpactPauseChanged;
         networkJumpStartPosition.OnValueChanged -= OnJumpStartPositionChanged;
         networkCurrentPosition.OnValueChanged -= OnCurrentPositionChanged;
+        networkJumpDirection.OnValueChanged -= OnJumpDirectionChanged;
+        networkJumpTargetPosition.OnValueChanged -= OnJumpTargetPositionChanged;
     }
     
     // Handlers para las NetworkVariables
@@ -162,15 +183,22 @@ public class EarthquakeAbility : BaseAbility
         
         if (isInImpactPause && !networkOwner.IsOwner)
         {
-            // Restaurar posición exactamente a la inicial para jugadores remotos
-            if (jumpStartPosition != Vector3.zero)
+            // Definir la posición de impacto (ahora puede ser diferente de la inicial)
+            Vector3 impactPosition = new Vector3(
+                jumpHighestPosition.x,
+                jumpStartPosition.y,
+                jumpHighestPosition.z
+            );
+            
+            // Restaurar posición para jugadores remotos
+            if (jumpHighestPosition != Vector3.zero)
             {
-                networkOwner.transform.position = jumpStartPosition;
+                networkOwner.transform.position = impactPosition;
                 
                 // Mostrar efecto de impacto (también para no propietarios)
                 if (earthquakeEffectPrefab != null)
                 {
-                    Instantiate(earthquakeEffectPrefab, jumpStartPosition, Quaternion.identity);
+                    Instantiate(earthquakeEffectPrefab, impactPosition, Quaternion.identity);
                 }
             }
             
@@ -202,7 +230,19 @@ public class EarthquakeAbility : BaseAbility
         }
     }
     
-    // MODIFICADO: Método para verificar si se puede activar la habilidad
+    private void OnJumpDirectionChanged(Vector3 previousValue, Vector3 newValue)
+    {
+        Debug.Log($"[EarthquakeAbility] OnJumpDirectionChanged: {previousValue} -> {newValue}, IsOwner: {networkOwner.IsOwner}");
+        jumpDirection = newValue;
+    }
+
+    private void OnJumpTargetPositionChanged(Vector3 previousValue, Vector3 newValue)
+    {
+        Debug.Log($"[EarthquakeAbility] OnJumpTargetPositionChanged: {previousValue} -> {newValue}, IsOwner: {networkOwner.IsOwner}");
+        jumpTargetPosition = newValue;
+    }
+    
+    // Método para verificar si se puede activar la habilidad
     public override bool CanActivate()
     {
         // No permitir activar si ya estamos en medio de un salto o caída
@@ -215,18 +255,15 @@ public class EarthquakeAbility : BaseAbility
             return false;
         }
         
-        // Verificar requisito de movimiento si está activado
-        if (requireMovement)
+        // IMPORTANTE: Solo verificar requisito de movimiento para el propietario local
+        if (requireMovement && networkOwner.IsOwner)
         {
             // Actualizar velocidad actual
             UpdateCurrentSpeed();
             
             if (currentSpeed < minMovementSpeed)
             {
-                if (networkOwner.IsOwner)
-                {
-                    Debug.Log($"[EarthquakeAbility] No se puede activar: velocidad insuficiente ({currentSpeed:F2} < {minMovementSpeed:F2})");
-                }
+                Debug.Log($"[EarthquakeAbility] No se puede activar: velocidad insuficiente ({currentSpeed:F2} < {minMovementSpeed:F2})");
                 return false;
             }
         }
@@ -235,9 +272,12 @@ public class EarthquakeAbility : BaseAbility
         return isReady && playerStats.CurrentMana >= manaCost;
     }
     
-    // NUEVO: Método para actualizar la velocidad actual
+    // Método para actualizar la velocidad actual
     private void UpdateCurrentSpeed()
     {
+        // Solo el propietario necesita calcular su velocidad actual
+        if (!networkOwner.IsOwner) return;
+        
         // Actualizar velocidad cada cierto intervalo para evitar cálculos excesivos
         if (Time.time - lastSpeedUpdateTime >= speedUpdateInterval)
         {
@@ -252,48 +292,186 @@ public class EarthquakeAbility : BaseAbility
             lastSpeedUpdateTime = Time.time;
             
             // Debug cada pocos segundos para no saturar
-            if (networkOwner.IsOwner && Time.frameCount % 300 == 0)
+            if (Time.frameCount % 300 == 0)
             {
                 Debug.Log($"[EarthquakeAbility] Velocidad actual: {currentSpeed:F2} unidades/seg");
             }
         }
     }
     
-    public override void Activate()
+// 1. Arreglar el problema del host modificando el método Activate():
+
+public override void Activate()
+{
+    Debug.Log($"[EarthquakeAbility] Método Activate llamado, isOwner: {networkOwner.IsOwner}, posición actual: {networkOwner.transform.position}");
+    
+    // Para el propietario (sea host o cliente), enviamos RPC y dejamos que el servidor inicie el proceso
+    if (networkOwner.IsOwner)
     {
-        Debug.Log($"[EarthquakeAbility] Método Activate llamado, isOwner: {networkOwner.IsOwner}, posición actual: {networkOwner.transform.position}");
-        
-        // Enviar evento de activación explícito (crucialmente importante para sincronización)
-        if (networkOwner.IsOwner)
+        // IMPORTANTE: Para el host (que es servidor + cliente), necesitamos iniciar el salto directamente
+        if (networkOwner.IsServer)
         {
+            // Si somos host, calculamos directamente la dirección y activamos la habilidad sin RPC
+            SetupDirectionalJump();
+            
+            // Asegurarse de que el maná se consume
+            if (playerStats.UseMana(manaCost))
+            {
+                StartJump();
+                
+                // Notificar a los demás clientes (no al host, que ya inició el salto)
+                ActivateClientRpc(netObj.OwnerClientId, jumpDirection, jumpTargetPosition);
+            }
+        }
+        else
+        {
+            // Si somos cliente normal, enviamos RPC al servidor
             ActivateServerRpc();
         }
-        
+    }
+    else
+    {
+        // Para clientes remotos que reciben la llamada desde otros métodos, iniciar el salto directamente
         StartJump();
     }
-    
-    [ServerRpc(RequireOwnership = true)]
-    private void ActivateServerRpc()
+}
+
+// 2. Agregar este nuevo método para configurar el salto direccional correctamente:
+
+private void SetupDirectionalJump()
+{
+    jumpStartPosition = networkOwner.transform.position;
+    jumpDirection = Vector3.zero;
+    jumpTargetPosition = jumpStartPosition;
+
+    if (enableDirectionalJump && abilityController != null)
     {
-        // Nota: este RPC solo se usa para asegurar que el servidor registre la activación
-        Debug.Log($"[EarthquakeAbility] ActivateServerRpc recibido, servidor notificado de activación");
+        // Obtener posición objetivo actual (último punto de clic)
+        Vector3 targetPosition = abilityController.GetTargetPosition();
         
-        // Notificar a todos los clientes que alguien activó la habilidad
-        ActivateClientRpc(netObj.OwnerClientId);
-    }
-    
-    [ClientRpc]
-    private void ActivateClientRpc(ulong ownerClientId)
-    {
-        // Evitar que el propietario lo procese dos veces
-        if (netObj.OwnerClientId == ownerClientId && NetworkManager.Singleton.LocalClientId != ownerClientId)
+        // Calcular vector dirección completo (incluida diagonal)
+        Vector3 directionToTarget = targetPosition - jumpStartPosition;
+        directionToTarget.y = 0; // Ignoramos la altura
+        
+        if (directionToTarget.magnitude > 0.1f)
         {
-            Debug.Log($"[EarthquakeAbility] ActivateClientRpc: Cliente {NetworkManager.Singleton.LocalClientId} notificado que cliente {ownerClientId} activó la habilidad");
+            // IMPORTANTE: Normalizar pero mantener proporción X/Z para diagonales
+            jumpDirection = directionToTarget.normalized;
             
-            // Los clientes no-propietarios no necesitan hacer nada aquí
-            // Los estados se sincronizan a través de NetworkVariables
+            // Calcular distancia real (limitada por el máximo)
+            float actualDistance = Mathf.Min(directionToTarget.magnitude, horizontalJumpDistance);
+            
+            // La posición objetivo es la posición inicial más la dirección * distancia
+            jumpTargetPosition = jumpStartPosition + jumpDirection * actualDistance;
+            
+            Debug.Log($"[EarthquakeAbility] Salto direccional configurado: Dirección={jumpDirection}, Posición objetivo={jumpTargetPosition}");
         }
     }
+}
+
+// 3. Modificar ActivateServerRpc para usar el nuevo método:
+
+[ServerRpc(RequireOwnership = true)]
+private void ActivateServerRpc()
+{
+    Debug.Log($"[EarthquakeAbility] ActivateServerRpc recibido, servidor notificado de activación");
+    
+    // Configurar el salto direccional
+    SetupDirectionalJump();
+    
+    // El servidor verifica que se cumplen todas las condiciones
+    if (CanActivate())
+    {
+        Debug.Log($"[EarthquakeAbility] ActivateServerRpc aprobado, notificando a todos los clientes");
+        
+        // Consumir maná en el servidor
+        if (playerStats != null)
+        {
+            playerStats.UseMana(manaCost);
+        }
+        
+        // Activar el salto en todos los clientes
+        ActivateClientRpc(netObj.OwnerClientId, jumpDirection, jumpTargetPosition);
+        
+        // Si somos servidor pero no propietario (por ejemplo, un servidor dedicado), iniciar el salto explícitamente
+        if (!networkOwner.IsOwner)
+        {
+            StartJump();
+        }
+    }
+    else
+    {
+        Debug.Log($"[EarthquakeAbility] ActivateServerRpc rechazado, no se cumplen las condiciones");
+    }
+}
+
+// 4. Simplificar ActivateClientRpc:
+
+[ClientRpc]
+private void ActivateClientRpc(ulong ownerClientId, Vector3 direction, Vector3 targetPos)
+{
+    Debug.Log($"[EarthquakeAbility] ActivateClientRpc: Cliente {NetworkManager.Singleton.LocalClientId} notificado. Dirección={direction}");
+    
+    // Si somos el host (servidor + cliente local), ignoramos este mensaje porque ya iniciamos el salto
+    if (networkOwner.IsServer && networkOwner.IsOwner)
+    {
+        Debug.Log("[EarthquakeAbility] Host ignora ClientRpc porque ya inició el salto");
+        return;
+    }
+    
+    // Para todos los demás clientes, configurar dirección y posición objetivo
+    jumpDirection = direction;
+    jumpTargetPosition = targetPos;
+    
+    // Solo iniciar el salto si somos el propietario o un cliente remoto (no propietario)
+    // El servidor no propietario ya lo inició en ActivateServerRpc
+    if ((networkOwner.IsOwner && NetworkManager.Singleton.LocalClientId == ownerClientId) || 
+        (!networkOwner.IsOwner && !networkOwner.IsServer))
+    {
+        StartJump();
+    }
+}
+
+// 5. Ajustar StartJump para garantizar que la dirección se mantenga intacta:
+
+private void StartJump()
+{
+    if (isJumping || isFalling) return;
+    
+    Debug.Log($"[EarthquakeAbility] StartJump - Iniciando salto. Posición={networkOwner.transform.position}, Dirección={jumpDirection}");
+    
+    // Guardar posición inicial para cálculos
+    jumpStartPosition = networkOwner.transform.position;
+    
+    // IMPORTANTE: No recalcular la dirección o posición objetivo aquí, usar los valores ya establecidos
+    
+    // Desactivar física para control manual
+    DisablePhysicsControllers();
+    
+    // Si somos el propietario, actualizar las variables de red
+    if (networkOwner.IsOwner)
+    {
+        networkJumpStartPosition.Value = jumpStartPosition;
+        networkJumpDirection.Value = jumpDirection;
+        networkJumpTargetPosition.Value = jumpTargetPosition;
+        networkIsJumping.Value = true;
+        networkIsFalling.Value = false;
+        networkIsInImpactPause.Value = false;
+        
+        // Forzar actualización inmediata de transform
+        networkCurrentPosition.Value = jumpStartPosition;
+    }
+    
+    // Iniciar fase de salto
+    isJumping = true;
+    jumpTime = 0f;
+    
+    // Nuevo: Notificar visualmente que se inició el salto
+    if (networkOwner.IsOwner)
+    {
+        TriggerJumpStartVisualEffectServerRpc();
+    }
+}
     
     // Método para resetear completamente la habilidad
     public void ResetAbility()
@@ -355,41 +533,6 @@ public class EarthquakeAbility : BaseAbility
         }
     }
     
-    private void StartJump()
-    {
-        if (isJumping || isFalling) return;
-        
-        Debug.Log($"[EarthquakeAbility] StartJump - Iniciando salto en {(networkOwner.IsOwner ? "PROPIETARIO" : "NO PROPIETARIO")}");
-        
-        // Guardar posición inicial para cálculos
-        jumpStartPosition = networkOwner.transform.position;
-        
-        // Desactivar física para control manual
-        DisablePhysicsControllers();
-        
-        // Si somos el propietario, actualizar las variables de red
-        if (networkOwner.IsOwner)
-        {
-            Debug.Log($"[EarthquakeAbility] Propietario actualizando variables de red, posición inicial: {jumpStartPosition}");
-            networkJumpStartPosition.Value = jumpStartPosition;
-            networkIsJumping.Value = true;
-            networkIsFalling.Value = false;
-            networkIsInImpactPause.Value = false;
-            
-            // Forzar actualización inmediata de transform
-            networkCurrentPosition.Value = jumpStartPosition;
-        }
-        
-        // Iniciar fase de salto
-        isJumping = true;
-        jumpTime = 0f;
-        
-        // Nuevo: Notificar visualmente que se inició el salto
-        if (networkOwner.IsOwner)
-        {
-            TriggerJumpStartVisualEffectServerRpc();
-        }
-    }
     
     private void DisablePhysicsControllers()
     {
@@ -433,14 +576,30 @@ public class EarthquakeAbility : BaseAbility
             {
                 // Usamos una curva sinusoidal para un movimiento más natural
                 float progress = jumpTime / riseTime; // Normalizado de 0 a 1
+                
+                // MODIFICADO: Curva de altura más pronunciada al principio y final para mayor efecto visual
                 float height = jumpHeight * Mathf.Sin(progress * Mathf.PI / 2);
                 
-                // Calcular nueva posición
-                Vector3 newPosition = new Vector3(
-                    jumpStartPosition.x,
-                    jumpStartPosition.y + height,
-                    jumpStartPosition.z
-                );
+                // NUEVO: Calcular movimiento horizontal basado en la curva personalizada
+                float horizontalProgress = horizontalMovementCurve.Evaluate(progress);
+                
+                // Calcular nueva posición combinando vertical y horizontal
+                Vector3 verticalOffset = new Vector3(0, height, 0);
+                Vector3 horizontalOffset = Vector3.zero;
+                
+                // Si hay dirección de salto, aplicar desplazamiento horizontal
+                if (jumpDirection.magnitude > 0.01f)
+                {
+                    // MODIFICADO: Usar curva para hacer que el movimiento horizontal sea más balístico
+                    horizontalOffset = (jumpTargetPosition - jumpStartPosition) * horizontalProgress;
+                    
+                    // Debug para verificar que esto se ejecuta en todos los clientes
+                    if (Time.frameCount % 60 == 0) {
+                        Debug.Log($"[EarthquakeAbility] Salto direccional progreso: {progress:F2}, dirección: {jumpDirection}, offset horizontal: {horizontalOffset.magnitude:F2}");
+                    }
+                }
+                
+                Vector3 newPosition = jumpStartPosition + verticalOffset + horizontalOffset;
                 
                 // Aplicar posición
                 networkOwner.transform.position = newPosition;
@@ -493,14 +652,17 @@ public class EarthquakeAbility : BaseAbility
                 float t = progress;
                 float heightFactor = 1 - (t * t); // Caída acelerada
                 
-                // La altura al inicio de la caída debe ser jumpHeight
-                float fallDistance = jumpHighestPosition.y - jumpStartPosition.y;
+                // La altura al inicio de la caída debe basarse en la posición más alta
+                float fallHeight = jumpHighestPosition.y;
                 
-                // Calcular nueva posición (descendiendo desde altura máxima)
+                // NUEVO: Para el movimiento horizontal durante la caída, queremos mantener la posición X/Z
+                // de la posición más alta pero caer verticalmente hacia la posición objetivo final
+                
+                // Mantener X/Z de la posición más alta durante la caída
                 Vector3 newPosition = new Vector3(
-                    jumpStartPosition.x,
-                    jumpStartPosition.y + (fallDistance * heightFactor),
-                    jumpStartPosition.z
+                    jumpHighestPosition.x,
+                    jumpStartPosition.y + (fallHeight - jumpStartPosition.y) * heightFactor,
+                    jumpHighestPosition.z
                 );
                 
                 // Aplicar posición
@@ -515,11 +677,12 @@ public class EarthquakeAbility : BaseAbility
                 // Debug para verificar la caída
                 if (progress >= 0.98f)
                 {
-                    // Nos acercamos al final, asegurarnos de que terminaremos en la posición inicial
+                    // Nos acercamos al final, asegurarnos de que terminaremos en la posición X/Z final
+                    // pero con la altura inicial más un pequeño offset
                     Vector3 finalPosition = new Vector3(
-                        jumpStartPosition.x,
+                        jumpHighestPosition.x,
                         jumpStartPosition.y + 0.01f, // Pequeño offset para evitar problemas de física
-                        jumpStartPosition.z
+                        jumpHighestPosition.z
                     );
                     
                     networkOwner.transform.position = finalPosition;
@@ -545,13 +708,19 @@ public class EarthquakeAbility : BaseAbility
                     networkIsInImpactPause.Value = true;
                 }
                 
-                // Restaurar posición exactamente a la inicial
-                networkOwner.transform.position = jumpStartPosition;
+                // Restaurar posición exactamente a la final (X/Z de la posición más alta, Y de la inicial)
+                Vector3 impactPosition = new Vector3(
+                    jumpHighestPosition.x,
+                    jumpStartPosition.y,
+                    jumpHighestPosition.z
+                );
+                
+                networkOwner.transform.position = impactPosition;
                 
                 // Si somos el propietario, actualizar la posición en la red
                 if (networkOwner.IsOwner)
                 {
-                    networkCurrentPosition.Value = jumpStartPosition;
+                    networkCurrentPosition.Value = impactPosition;
                 }
                 
                 // Configurar Rigidbody para la pausa
@@ -575,10 +744,17 @@ public class EarthquakeAbility : BaseAbility
         }
     }
     
-    private IEnumerator ImpactPause()
+private IEnumerator ImpactPause()
     {
         // Asegurarse de que estamos en modo pausa
         isInImpactPause = true;
+        
+        // NUEVO: La posición final ahora es diferente si hubo movimiento horizontal
+        Vector3 finalPosition = new Vector3(
+            jumpHighestPosition.x,
+            jumpStartPosition.y,
+            jumpHighestPosition.z
+        );
         
         // Informar al controlador de habilidades sobre el estado de pausa si existe
         if (abilityController != null)
@@ -713,9 +889,9 @@ public class EarthquakeAbility : BaseAbility
     public bool IsJumping => isJumping;
     public bool IsFalling => isFalling;
     public bool IsInImpactPause => isInImpactPause;
-    public float CurrentSpeed => currentSpeed; // NUEVA: Exposición de la velocidad actual
+    public float CurrentSpeed => currentSpeed; // Exposición de la velocidad actual
     
-    // NUEVO: Método público para verificar si se está moviendo lo suficientemente rápido
+    // Método público para verificar si se está moviendo lo suficientemente rápido
     public bool IsMovingFastEnough()
     {
         return currentSpeed >= minMovementSpeed;
