@@ -2,6 +2,7 @@ using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.AI;
 using System.Collections;
+using PlayerAbilities; // Añadimos este namespace para acceder a las habilidades
 
 public class PlayerNetwork : NetworkBehaviour
 {
@@ -61,6 +62,12 @@ public class PlayerNetwork : NetworkBehaviour
     // Referencia al componente de estadísticas del jugador (si existe)
     private PlayerStats playerStats;
     
+    // Referencia al controlador de habilidades para verificar estados
+    private PlayerAbilityController abilityController;
+    
+    // Referencia a la habilidad de terremoto para verificar su estado
+    private EarthquakeAbility earthquakeAbility;
+    
     private void Awake()
     {
         // Generar ID único para este jugador para propósitos de depuración
@@ -79,6 +86,9 @@ public class PlayerNetwork : NetworkBehaviour
         
         // Obtener PlayerStats si existe
         playerStats = GetComponent<PlayerStats>();
+        
+        // Obtener referencias al sistema de habilidades
+        abilityController = GetComponent<PlayerAbilityController>();
     }
     
     // Override para el spawn en red
@@ -111,10 +121,34 @@ public class PlayerNetwork : NetworkBehaviour
             {
                 CreateLocalClickIndicator();
             }
+            
+            // Buscar referencia a la habilidad de terremoto
+            StartCoroutine(FindEarthquakeAbility());
         }
         
         // Suscribirse al cambio de la variable isStunned
         isStunned.OnValueChanged += OnStunnedValueChanged;
+    }
+    
+    private IEnumerator FindEarthquakeAbility()
+    {
+        // Esperar un poco para asegurar que las habilidades estén inicializadas
+        yield return new WaitForSeconds(0.3f);
+        
+        earthquakeAbility = GetComponent<EarthquakeAbility>();
+        
+        if (earthquakeAbility != null)
+        {
+            Debug.Log($"[PLAYER_{playerUniqueId}] Encontrada referencia a EarthquakeAbility");
+        }
+        else
+        {
+            Debug.LogWarning($"[PLAYER_{playerUniqueId}] No se encontró EarthquakeAbility, reintentando...");
+            
+            // Intentar una vez más
+            yield return new WaitForSeconds(0.5f);
+            earthquakeAbility = GetComponent<EarthquakeAbility>();
+        }
     }
     
     // Método que se ejecuta cuando cambia el valor de isStunned
@@ -225,8 +259,11 @@ public class PlayerNetwork : NetworkBehaviour
     {
         if (IsLocalPlayer)
         {
-            // Solo procesar input si no estamos aturdidos
-            if (canMove)
+            // Verificar si hay alguna pausa de habilidad activa
+            bool isAbilityPaused = IsInAbilityPause();
+            
+            // Solo procesar input si no estamos aturdidos ni en pausa de habilidad
+            if (canMove && !isAbilityPaused)
             {
                 // Procesar input de movimiento solo para el jugador local
                 HandleMouseMovement();
@@ -237,10 +274,24 @@ public class PlayerNetwork : NetworkBehaviour
                     MoveToTargetPosition();
                 }
             }
+            else if (isAbilityPaused)
+            {
+                // Si hay pausa de habilidad, cancelar cualquier movimiento
+                isMovingToTarget = false;
+                
+                // Log para depuración
+                if (Time.frameCount % 60 == 0) // Cada 60 frames para no saturar la consola
+                {
+                    Debug.Log($"[PLAYER_{playerUniqueId}] Movimiento bloqueado por pausa de habilidad");
+                }
+                
+                // Mientras estemos en pausa, actualizar posición al servidor
+                UpdatePositionServerRpc(transform.position, transform.rotation);
+            }
             
             // Cuando estemos usando físicas, actualizar la posición en el servidor
             // incluso si no estamos controlando el movimiento directamente
-            if (!canMove && rb != null && rb.velocity.magnitude > 0.01f)
+            if ((!canMove || isAbilityPaused) && rb != null && rb.velocity.magnitude > 0.01f)
             {
                 UpdatePositionServerRpc(transform.position, transform.rotation);
             }
@@ -255,10 +306,35 @@ public class PlayerNetwork : NetworkBehaviour
         }
     }
     
+    // Nuevo método para verificar si hay alguna pausa de habilidad activa
+    private bool IsInAbilityPause()
+    {
+        // Verificar pausa en el controlador de habilidades
+        if (abilityController != null && abilityController.isInImpactPause)
+        {
+            return true;
+        }
+        
+        // Verificar directamente el estado de la habilidad de terremoto
+        if (earthquakeAbility != null && earthquakeAbility.IsInImpactPause)
+        {
+            return true;
+        }
+        
+        return false;
+    }
+    
     private void HandleMouseMovement()
     {
-        // Si estamos aturdidos, no procesar movimiento
-        if (!canMove) return;
+        // Si estamos aturdidos o en pausa de habilidad, no procesar movimiento
+        if (!canMove || IsInAbilityPause()) 
+        {
+            if (Input.GetMouseButtonDown(1))
+            {
+                Debug.Log($"[PLAYER_{playerUniqueId}] Movimiento por clic bloqueado por pausa/aturdimiento");
+            }
+            return;
+        }
         
         // Click derecho para mover
         if (Input.GetMouseButtonDown(1))
@@ -269,6 +345,13 @@ public class PlayerNetwork : NetworkBehaviour
             // Verificar si el raycast golpea en la capa del suelo
             if (Physics.Raycast(ray, out hit, 100f, groundLayer))
             {
+                // Verificar otra vez si estamos en pausa o aturdidos
+                if (!canMove || IsInAbilityPause())
+                {
+                    Debug.Log($"[PLAYER_{playerUniqueId}] Movimiento bloqueado en último momento por pausa/aturdimiento");
+                    return;
+                }
+                
                 // Establecer la posición objetivo y activar movimiento
                 targetPosition = hit.point;
                 isMovingToTarget = true;
@@ -294,8 +377,12 @@ public class PlayerNetwork : NetworkBehaviour
     
     private void MoveToTargetPosition()
     {
-        // Si estamos aturdidos, no procesar movimiento
-        if (!canMove) return;
+        // Verificar constantemente si hay pausas o aturdimientos
+        if (!canMove || IsInAbilityPause())
+        {
+            isMovingToTarget = false;
+            return;
+        }
         
         // Calcular dirección hacia el objetivo
         Vector3 direction = targetPosition - transform.position;

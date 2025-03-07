@@ -20,7 +20,9 @@ public class PlayerAbilityController : NetworkBehaviour
     // Variables para movimiento con clic
     private Vector3 targetPosition;
     private bool isMoving = false;
-    private bool isInImpactPause = false;
+    
+    // Cambiado a público para permitir acceso desde otras clases
+    public bool isInImpactPause { get; private set; } = false;
     
     // Abrir acceso público a las habilidades más comunes para consultas rápidas
     private DashAbility dashAbility;
@@ -45,7 +47,7 @@ public class PlayerAbilityController : NetworkBehaviour
         {
             if (IsServer || IsClient)
             {
-                InitializeDefaultAbilities();
+                // Se inicializa en OnNetworkSpawn con un pequeño retraso
             }
         }
         else
@@ -58,6 +60,14 @@ public class PlayerAbilityController : NetworkBehaviour
     public override void OnNetworkSpawn()
     {
         base.OnNetworkSpawn();
+        
+        // Esperar un breve momento para que el NetworkManager esté completamente inicializado
+        StartCoroutine(DelayedInitialization());
+    }
+
+    private IEnumerator DelayedInitialization()
+    {
+        yield return new WaitForSeconds(0.2f);
         InitializeDefaultAbilities();
     }
     
@@ -72,6 +82,18 @@ public class PlayerAbilityController : NetworkBehaviour
         
         // Si quieres añadir más habilidades por defecto, hazlo aquí
         // AddAbility<OtraHabilidad>();
+        
+        // Inicializar explícitamente cada habilidad con este NetworkBehaviour
+        foreach (var ability in activeAbilities)
+        {
+            ability.Initialize(this);
+        }
+        
+        // Notificar que se inicializaron correctamente
+        if (IsOwner)
+        {
+            Debug.Log("[PlayerAbilityController] Habilidades inicializadas correctamente");
+        }
     }
     
     private void Update()
@@ -358,5 +380,12 @@ public class PlayerAbilityController : NetworkBehaviour
     public Vector3 GetTargetPosition()
     {
         return targetPosition;
+    }
+    
+    // Método añadido para compatibilidad con código existente que necesite
+    // acceder al estado de pausa de impacto
+    public bool IsInImpactPause()
+    {
+        return isInImpactPause;
     }
 }
