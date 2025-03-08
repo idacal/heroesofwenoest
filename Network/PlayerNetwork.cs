@@ -39,6 +39,10 @@ public class PlayerNetwork : NetworkBehaviour
         NetworkVariableReadPermission.Everyone, 
         NetworkVariableWritePermission.Server);
     
+    // NUEVO: Variable para controlar si el jugador puede moverse (para respawn)
+    private NetworkVariable<bool> playerControlEnabled = new NetworkVariable<bool>(
+        true, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+    
     // Referencias locales - NO se sincronizan por red
     private GameObject localCameraObject;
     private MOBACamera mobaCameraComponent;
@@ -70,6 +74,9 @@ public class PlayerNetwork : NetworkBehaviour
     
     // Referencia a la habilidad dash
     private DashAbility dashAbility;
+    
+    // Referencia al StrongJumpAbility
+    private StrongJumpAbility strongJumpAbility;
     
     private void Awake()
     {
@@ -106,12 +113,16 @@ public class PlayerNetwork : NetworkBehaviour
             networkPosition.Value = transform.position;
             networkRotation.Value = transform.rotation;
             isStunned.Value = false;
+            playerControlEnabled.Value = true;
             
             Debug.Log($"[PLAYER_{playerUniqueId}] Servidor inicializó posición de red: {networkPosition.Value}");
         }
         
         // Suscribirse al cambio de la variable isStunned
         isStunned.OnValueChanged += OnStunnedValueChanged;
+        
+        // Suscribirse al cambio de la variable playerControlEnabled
+        playerControlEnabled.OnValueChanged += OnPlayerControlEnabledChanged;
         
         // Inicializar con un pequeño retraso para permitir sincronización 
         StartCoroutine(DelayedInitialization());
@@ -150,7 +161,7 @@ public class PlayerNetwork : NetworkBehaviour
                 CreateLocalClickIndicator();
             }
             
-            // Buscar referencia a la habilidad de terremoto
+            // Buscar referencia a las habilidades
             StartCoroutine(FindAbilities());
         }
     }
@@ -227,20 +238,20 @@ public class PlayerNetwork : NetworkBehaviour
         // Esperar un poco para asegurar que las habilidades estén inicializadas
         yield return new WaitForSeconds(0.3f);
         
-        earthquakeAbility = GetComponent<EarthquakeAbility>();
         dashAbility = GetComponent<DashAbility>();
+        strongJumpAbility = GetComponent<StrongJumpAbility>();
         
-        if (earthquakeAbility != null)
+        if (strongJumpAbility != null)
         {
-            Debug.Log($"[PLAYER_{playerUniqueId}] Encontrada referencia a EarthquakeAbility");
+            Debug.Log($"[PLAYER_{playerUniqueId}] Encontrada referencia a StrongJumpAbility");
         }
         else
         {
-            Debug.LogWarning($"[PLAYER_{playerUniqueId}] No se encontró EarthquakeAbility, reintentando...");
+            Debug.LogWarning($"[PLAYER_{playerUniqueId}] No se encontró StrongJumpAbility, reintentando...");
             
             // Intentar una vez más
             yield return new WaitForSeconds(0.5f);
-            earthquakeAbility = GetComponent<EarthquakeAbility>();
+            strongJumpAbility = GetComponent<StrongJumpAbility>();
         }
         
         if (dashAbility != null)
@@ -274,6 +285,45 @@ public class PlayerNetwork : NetworkBehaviour
                 rb.velocity = Vector3.zero;
             }
         }
+    }
+    
+    // NUEVO: Método que se ejecuta cuando cambia el valor de playerControlEnabled
+    private void OnPlayerControlEnabledChanged(bool oldValue, bool newValue)
+    {
+        Debug.Log($"[PLAYER_{playerUniqueId}] Control de jugador cambió de {oldValue} a {newValue}");
+        
+        if (!newValue)
+        {
+            // Si se desactiva el control, detener cualquier movimiento
+            isMovingToTarget = false;
+            
+            // Si somos el dueño, detenemos el rigidbody
+            if (IsOwner && rb != null)
+            {
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+        }
+    }
+    
+    // NUEVO: Método público para habilitar/deshabilitar el control del jugador
+    public void SetPlayerControlEnabled(bool enabled)
+    {
+        if (IsServer)
+        {
+            playerControlEnabled.Value = enabled;
+        }
+        else if (IsOwner)
+        {
+            SetPlayerControlEnabledServerRpc(enabled);
+        }
+    }
+    
+    // NUEVO: ServerRpc para habilitar/deshabilitar el control del jugador
+    [ServerRpc]
+    private void SetPlayerControlEnabledServerRpc(bool enabled)
+    {
+        playerControlEnabled.Value = enabled;
     }
     
     private void CreateLocalClickIndicator()
@@ -369,8 +419,8 @@ public class PlayerNetwork : NetworkBehaviour
         // Verificar si hay habilidades activas que controlen la posición
         if (abilityController != null)
         {
-            // Verificar EarthquakeAbility
-            if (earthquakeAbility != null && (earthquakeAbility.IsJumping || earthquakeAbility.IsFalling || earthquakeAbility.IsInImpactPause))
+            // Verificar StrongJumpAbility
+            if (strongJumpAbility != null && (strongJumpAbility.IsJumping || strongJumpAbility.IsFalling || strongJumpAbility.IsImmobilized))
             {
                 abilityControllingPosition = true;
             }
@@ -387,6 +437,12 @@ public class PlayerNetwork : NetworkBehaviour
     
     private void Update()
     {
+        // MODIFICADO: Verificar primero si el control está habilitado
+        if (!playerControlEnabled.Value)
+        {
+            return; // Salir temprano si el control está deshabilitado
+        }
+        
         if (IsLocalPlayer)
         {
             // Verificar si hay alguna pausa de habilidad activa
@@ -453,8 +509,8 @@ public class PlayerNetwork : NetworkBehaviour
             return true;
         }
         
-        // Verificar directamente el estado de la habilidad de terremoto
-        if (earthquakeAbility != null && earthquakeAbility.IsInImpactPause)
+        // Verificar directamente el estado de inmobilización de StrongJump
+        if (strongJumpAbility != null && strongJumpAbility.IsImmobilized)
         {
             return true;
         }
@@ -716,6 +772,9 @@ public class PlayerNetwork : NetworkBehaviour
         // Desuscribirse del evento de cambio de isStunned
         isStunned.OnValueChanged -= OnStunnedValueChanged;
         
+        // Desuscribirse del evento de cambio de playerControlEnabled
+        playerControlEnabled.OnValueChanged -= OnPlayerControlEnabledChanged;
+        
         if (IsLocalPlayer)
         {
             if (localCameraObject != null)
@@ -756,5 +815,23 @@ public class PlayerNetwork : NetworkBehaviour
                 Destroy(localClickIndicator);
             }
         }
+    }
+    
+    // Método público para verificar si el jugador tiene control actualmente
+    public bool IsPlayerControlEnabled()
+    {
+        return playerControlEnabled.Value;
+    }
+    
+    // Método público para obtener el estado de movimiento
+    public bool IsMoving()
+    {
+        return isMovingToTarget;
+    }
+    
+    // Método público para obtener la posición objetivo
+    public Vector3 GetTargetPosition()
+    {
+        return targetPosition;
     }
 }

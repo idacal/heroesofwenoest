@@ -10,10 +10,15 @@ public class StrongJumpAbility : BaseAbility
     [SerializeField] private float jumpHeight = 3f;          // Altura máxima del salto (más pequeña que Earthquake)
     [SerializeField] private float riseTime = 0.5f;          // Tiempo de subida del salto (más rápido)
     [SerializeField] private float fallTime = 0.3f;          // Tiempo de caída (más rápido)
-    [SerializeField] private float immobilizationTime = 1f;  // Tiempo de inmovilización después del aterrizaje
-    [SerializeField] private float jumpDistance = 10f;        // Distancia horizontal del salto
+    [SerializeField] private float immobilizationTime = 0.2f;  // Tiempo de inmovilización después del aterrizaje
+    [SerializeField] private float baseJumpDistance = 6f;   // Distancia base del salto
+    [SerializeField] private float maxSpeedMultiplier = 2.5f; // Multiplicador máximo por velocidad
+    [SerializeField] private float maxSpeedThreshold = 15f;  // Velocidad a la que se aplica el multiplicador máximo
     [SerializeField] private GameObject landingEffectPrefab;  // Efecto visual al aterrizar
     [SerializeField] private float minMovementSpeed = 0.5f;  // Velocidad mínima para activar
+
+    // Variable para guardar la distancia de salto calculada
+    private float jumpDistance = 10f;
 
     // Estado del salto - NetworkVariables para sincronización estricta
     private NetworkVariable<bool> networkIsJumping = new NetworkVariable<bool>(false, 
@@ -28,6 +33,10 @@ public class StrongJumpAbility : BaseAbility
         Vector3.zero, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     private NetworkVariable<Vector3> networkCurrentPosition = new NetworkVariable<Vector3>(
         Vector3.zero, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+    
+    // Nueva variable para sincronizar la distancia de salto 
+    private NetworkVariable<float> networkJumpDistance = new NetworkVariable<float>(
+        10f, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     
     // Variables locales para seguimiento de animación
     private bool isJumping = false;
@@ -53,7 +62,7 @@ public class StrongJumpAbility : BaseAbility
     {
         base.Initialize(owner);
         abilityName = "Salto Fuerte";
-        activationKey = KeyCode.W;  // Nueva tecla F para esta habilidad
+        activationKey = KeyCode.W;  // Tecla W para esta habilidad
         manaCost = 20f;
         cooldown = 8f;
         
@@ -67,6 +76,7 @@ public class StrongJumpAbility : BaseAbility
         networkJumpStartPosition.OnValueChanged += OnJumpStartPositionChanged;
         networkCurrentPosition.OnValueChanged += OnCurrentPositionChanged;
         networkJumpDirection.OnValueChanged += OnJumpDirectionChanged;
+        networkJumpDistance.OnValueChanged += OnJumpDistanceChanged;
         
         // Establecer posición inicial
         if (networkOwner.IsOwner)
@@ -90,6 +100,14 @@ public class StrongJumpAbility : BaseAbility
         networkJumpStartPosition.OnValueChanged -= OnJumpStartPositionChanged;
         networkCurrentPosition.OnValueChanged -= OnCurrentPositionChanged;
         networkJumpDirection.OnValueChanged -= OnJumpDirectionChanged;
+        networkJumpDistance.OnValueChanged -= OnJumpDistanceChanged;
+    }
+    
+    // Nuevo handler para la distancia de salto
+    private void OnJumpDistanceChanged(float previousValue, float newValue)
+    {
+        jumpDistance = newValue;
+        Debug.Log($"[StrongJumpAbility] Distancia de salto actualizada: {jumpDistance}");
     }
     
     // Handlers para las NetworkVariables
@@ -116,6 +134,7 @@ public class StrongJumpAbility : BaseAbility
                 // Para no propietarios, iniciar la animación
                 jumpTime = 0f;
                 jumpStartPosition = networkJumpStartPosition.Value;
+                jumpDistance = networkJumpDistance.Value;
                 
                 // Desactivar controladores físicos para la animación
                 DisablePhysicsControllers();
@@ -283,7 +302,7 @@ public class StrongJumpAbility : BaseAbility
     
     public override void Activate()
     {
-        Debug.Log($"[StrongJumpAbility] Método Activate llamado, isOwner: {networkOwner.IsOwner}, isServer: {networkOwner.IsServer}, posición: {networkOwner.transform.position}");
+        Debug.Log($"[StrongJumpAbility] Método Activate llamado, isOwner: {networkOwner.IsOwner}, isServer: {networkOwner.IsServer}, velocidad: {currentSpeed:F2}");
         
         if (networkOwner.IsOwner)
         {
@@ -314,6 +333,7 @@ public class StrongJumpAbility : BaseAbility
                     // Configurar variables de red para que otros clientes lo vean
                     networkJumpStartPosition.Value = jumpStartPosition;
                     networkJumpDirection.Value = jumpDirection;
+                    networkJumpDistance.Value = jumpDistance;
                     networkIsJumping.Value = true;
                     networkIsFalling.Value = false;
                     networkIsImmobilized.Value = false;
@@ -322,9 +342,9 @@ public class StrongJumpAbility : BaseAbility
                     networkCurrentPosition.Value = jumpStartPosition;
                     
                     // Notificar solo a los demás clientes
-                    ActivateClientRpc(netObj.OwnerClientId, jumpDirection);
+                    ActivateClientRpc(netObj.OwnerClientId, jumpDirection, jumpDistance);
                     
-                    Debug.Log("[StrongJumpAbility] Host ha iniciado el salto DIRECTAMENTE");
+                    Debug.Log($"[StrongJumpAbility] Host ha iniciado el salto DIRECTAMENTE con distancia: {jumpDistance:F2}");
                 }
             }
             else // Cliente normal no-host
@@ -360,7 +380,45 @@ public class StrongJumpAbility : BaseAbility
         // Guardar la dirección
         jumpDirection = movementDirection;
         
-        Debug.Log($"[StrongJumpAbility] Dirección de salto configurada: {jumpDirection}");
+        // Calcular multiplicador de distancia basado en velocidad actual
+        float speedMultiplier = 1.0f; // Valor base
+        
+        // Asegurar que tenemos la velocidad actualizada
+        UpdateCurrentSpeed();
+        
+        // Calcular multiplicador según la velocidad
+        if (currentSpeed > minMovementSpeed)
+        {
+            // Proporción relativa entre la velocidad actual y la máxima
+            float speedRatio = Mathf.Clamp01((currentSpeed - minMovementSpeed) / (maxSpeedThreshold - minMovementSpeed));
+            
+            // Aplicar curva para que el efecto sea más pronunciado a mayores velocidades
+            speedMultiplier = 1.0f + ((maxSpeedMultiplier - 1.0f) * speedRatio * speedRatio);
+            
+            // Verificar si estamos en Dash para un bonus adicional
+            if (IsDashing())
+            {
+                // Bonus adicional del 20% en Dash
+                speedMultiplier *= 1.2f;
+            }
+        }
+        
+        // Aplicar el multiplicador a la distancia base
+        jumpDistance = baseJumpDistance * speedMultiplier;
+        
+        Debug.Log($"[StrongJumpAbility] Dirección de salto: {jumpDirection}, Velocidad: {currentSpeed:F2}, " +
+                  $"Multiplicador: {speedMultiplier:F2}, Distancia: {jumpDistance:F2}");
+    }
+    
+    // Método para verificar si estamos en Dash
+    private bool IsDashing()
+    {
+        DashAbility dashAbility = networkOwner.GetComponent<DashAbility>();
+        if (dashAbility != null)
+        {
+            return dashAbility.IsDashing;
+        }
+        return false;
     }
 
     [ServerRpc(RequireOwnership = true)]
@@ -383,7 +441,7 @@ public class StrongJumpAbility : BaseAbility
             }
             
             // Activar el salto en todos los clientes
-            ActivateClientRpc(netObj.OwnerClientId, jumpDirection);
+            ActivateClientRpc(netObj.OwnerClientId, jumpDirection, jumpDistance);
             
             // Si somos servidor pero no propietario, iniciar el salto explícitamente
             if (!networkOwner.IsOwner)
@@ -398,9 +456,10 @@ public class StrongJumpAbility : BaseAbility
     }
 
     [ClientRpc]
-    private void ActivateClientRpc(ulong ownerClientId, Vector3 direction)
+    private void ActivateClientRpc(ulong ownerClientId, Vector3 direction, float distance)
     {
-        Debug.Log($"[StrongJumpAbility] ActivateClientRpc: Cliente {NetworkManager.Singleton.LocalClientId} notificado. Dirección={direction}");
+        Debug.Log($"[StrongJumpAbility] ActivateClientRpc: Cliente {NetworkManager.Singleton.LocalClientId} notificado. " +
+                 $"Dirección={direction}, Distancia={distance:F2}");
         
         // Si somos el host (servidor + cliente local), ignoramos este mensaje porque ya iniciamos el salto
         if (networkOwner.IsServer && networkOwner.IsOwner)
@@ -409,8 +468,9 @@ public class StrongJumpAbility : BaseAbility
             return;
         }
         
-        // Para todos los demás clientes, configurar dirección
+        // Para todos los demás clientes, configurar dirección y distancia
         jumpDirection = direction;
+        jumpDistance = distance;
         
         // Solo iniciar el salto si somos el propietario o un cliente remoto (no propietario)
         if ((networkOwner.IsOwner && NetworkManager.Singleton.LocalClientId == ownerClientId) || 
@@ -424,7 +484,8 @@ public class StrongJumpAbility : BaseAbility
     {
         if (isJumping || isFalling) return;
         
-        Debug.Log($"[StrongJumpAbility] StartJump - Iniciando salto. Posición={networkOwner.transform.position}, Dirección={jumpDirection}");
+        Debug.Log($"[StrongJumpAbility] StartJump - Iniciando salto. Posición={networkOwner.transform.position}, " +
+                 $"Dirección={jumpDirection}, Distancia={jumpDistance:F2}");
         
         // Guardar posición inicial para cálculos
         jumpStartPosition = networkOwner.transform.position;
@@ -444,6 +505,7 @@ public class StrongJumpAbility : BaseAbility
         {
             networkJumpStartPosition.Value = jumpStartPosition;
             networkJumpDirection.Value = jumpDirection;
+            networkJumpDistance.Value = jumpDistance;
             networkIsJumping.Value = true;
             networkIsFalling.Value = false;
             networkIsImmobilized.Value = false;
