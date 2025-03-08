@@ -32,7 +32,7 @@ public class PlayerAbility : NetworkBehaviour
     
     // Referencias directas a las habilidades para consultar estados actuales
     private DashAbility dashAbility;
-    private EarthquakeAbility earthquakeAbility;
+    private StrongJumpAbility strongJumpAbility; // Reemplazo de EarthquakeAbility
     private ShieldAbility shieldAbility;
     
     // Tabla para mapear habilidades del powerup a slots del array abilities
@@ -57,7 +57,7 @@ public class PlayerAbility : NetworkBehaviour
             abilities[0] = new Ability { name = "Dash", activationKey = KeyCode.Q, manaCost = 30f, cooldown = 3f };
         
         if (abilities[1] == null)
-            abilities[1] = new Ability { name = "Terremoto", activationKey = KeyCode.W, manaCost = 60f, cooldown = 10f };
+            abilities[1] = new Ability { name = "Salto Fuerte", activationKey = KeyCode.W, manaCost = 20f, cooldown = 8f }; // Actualizado
         
         if (abilities[2] == null)
             abilities[2] = new Ability { name = "Escudo", activationKey = KeyCode.E, manaCost = 70f, cooldown = 8f };
@@ -100,7 +100,7 @@ public class PlayerAbility : NetworkBehaviour
         
         // Obtener referencias a las habilidades específicas
         dashAbility = GetComponent<DashAbility>();
-        earthquakeAbility = GetComponent<EarthquakeAbility>();
+        strongJumpAbility = GetComponent<StrongJumpAbility>(); // Actualizado
         
         // Buscar si ya existe el ShieldAbility (puede haber sido añadido antes)
         shieldAbility = GetComponent<ShieldAbility>();
@@ -129,10 +129,10 @@ public class PlayerAbility : NetworkBehaviour
                 abilities[0].cooldownEndTime = Time.time + dashAbility.GetRemainingCooldown();
             }
             
-            if (earthquakeAbility != null)
+            if (strongJumpAbility != null) // Actualizado
             {
-                abilities[1].isReady = earthquakeAbility.isReady;
-                abilities[1].cooldownEndTime = Time.time + earthquakeAbility.GetRemainingCooldown();
+                abilities[1].isReady = strongJumpAbility.isReady;
+                abilities[1].cooldownEndTime = Time.time + strongJumpAbility.GetRemainingCooldown();
             }
             
             // Actualizar las habilidades de powerup registradas
@@ -150,7 +150,7 @@ public class PlayerAbility : NetworkBehaviour
         {
             if (powerUpAbilities[i] != null)
             {
-                int abilitySlot = i + 2; // +2 porque 0 y 1 son dash y earthquake
+                int abilitySlot = i + 2; // +2 porque 0 y 1 son dash y strongjump
                 
                 // Asegurar que el slot existe en el array de abilities
                 if (abilitySlot < abilities.Length && abilities[abilitySlot] != null)
@@ -180,13 +180,13 @@ public class PlayerAbility : NetworkBehaviour
             dashAbility.icon = abilities[0].icon;
         }
         
-        if (earthquakeAbility != null && abilities[1] != null)
+        if (strongJumpAbility != null && abilities[1] != null) // Actualizado
         {
-            earthquakeAbility.abilityName = abilities[1].name;
-            earthquakeAbility.activationKey = abilities[1].activationKey;
-            earthquakeAbility.manaCost = abilities[1].manaCost;
-            earthquakeAbility.cooldown = abilities[1].cooldown;
-            earthquakeAbility.icon = abilities[1].icon;
+            strongJumpAbility.abilityName = abilities[1].name;
+            strongJumpAbility.activationKey = abilities[1].activationKey;
+            strongJumpAbility.manaCost = abilities[1].manaCost;
+            strongJumpAbility.cooldown = abilities[1].cooldown;
+            strongJumpAbility.icon = abilities[1].icon;
         }
         
         // Sincronizar las habilidades de powerup si existen
@@ -200,7 +200,7 @@ public class PlayerAbility : NetworkBehaviour
         {
             if (powerUpAbilities[i] != null)
             {
-                int abilitySlot = i + 2; // +2 porque posiciones 0 y 1 son dash y earthquake
+                int abilitySlot = i + 2; // +2 porque posiciones 0 y 1 son dash y strongjump
                 
                 if (abilitySlot < abilities.Length && abilities[abilitySlot] != null)
                 {
@@ -267,9 +267,9 @@ public class PlayerAbility : NetworkBehaviour
     // Método público para verificar si el jugador está en pausa de impacto
     public bool IsInImpactPause()
     {
-        if (earthquakeAbility != null)
+        if (strongJumpAbility != null) // Actualizado
         {
-            return earthquakeAbility.IsInImpactPause;
+            return strongJumpAbility.IsImmobilized; // Cambiado para usar la propiedad adecuada
         }
         return false;
     }
@@ -299,9 +299,9 @@ public class PlayerAbility : NetworkBehaviour
                         return dashAbility.GetRemainingCooldown();
                     break;
                     
-                case 1: // Terremoto
-                    if (earthquakeAbility != null)
-                        return earthquakeAbility.GetRemainingCooldown();
+                case 1: // StrongJump (reemplazo de Terremoto)
+                    if (strongJumpAbility != null)
+                        return strongJumpAbility.GetRemainingCooldown();
                     break;
                     
                 case 2: // Escudo u otra habilidad de powerup

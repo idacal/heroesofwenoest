@@ -123,13 +123,22 @@ public class EarthquakeAbility : BaseAbility
     {
         Debug.Log($"[EarthquakeAbility] OnJumpingChanged: {previousValue} -> {newValue}, IsOwner: {networkOwner.IsOwner}, IsServer: {networkOwner.IsServer}");
         
-        // Si somos el host y la variable ya está actualizada localmente, no sobreescribir
-        if (networkOwner.IsOwner && networkOwner.IsServer && isJumping == newValue)
+        // Si somos el host y estamos en medio de nuestro propio proceso de salto, no debemos
+        // dejar que el callback sobrescriba nuestras variables locales
+        if (networkOwner.IsOwner && networkOwner.IsServer)
         {
-            Debug.Log("[EarthquakeAbility] Host ignora cambio de NetworkVariable porque ya fue actualizado localmente");
-            return;
+            // Verificar si estamos en el proceso de iniciar nuestro propio salto
+            if (isJumping == newValue)
+            {
+                Debug.Log("[EarthquakeAbility] Host ignora cambio de NetworkVariable porque ya está sincronizado");
+                return;
+            }
+            
+            // Añadir debug especial para el host
+            Debug.Log($"[EarthquakeAbility] HOST: Detectado cambio en networkIsJumping que no fue iniciado localmente: {previousValue} -> {newValue}");
         }
         
+        // Para los clientes no propietarios, siempre actualizamos
         isJumping = newValue;
         
         if (isJumping)
@@ -137,14 +146,24 @@ public class EarthquakeAbility : BaseAbility
             // Activar modo de sincronización manual de transform
             syncingTransform = true;
             
-            if (!networkOwner.IsOwner)
+            // Para no propietarios O para el host si no inició el salto manualmente
+            if (!networkOwner.IsOwner || (networkOwner.IsServer && previousValue != newValue))
             {
-                // Para no propietarios, iniciar la animación
+                // Iniciar la animación
                 jumpTime = 0f;
                 jumpStartPosition = networkJumpStartPosition.Value;
                 
+                // Verificar que jumpStartPosition tiene un valor válido
+                if (jumpStartPosition == Vector3.zero)
+                {
+                    Debug.LogWarning("[EarthquakeAbility] ¡jumpStartPosition es cero! Usando posición actual");
+                    jumpStartPosition = networkOwner.transform.position;
+                }
+                
                 // Desactivar controladores físicos para la animación
                 DisablePhysicsControllers();
+                
+                Debug.Log($"[EarthquakeAbility] Configuración de salto - jumpStartPosition: {jumpStartPosition}, jumpTime: {jumpTime}");
             }
             
             Debug.Log($"[EarthquakeAbility] Iniciando salto para {(networkOwner.IsOwner ? "local" : "remoto")}");
@@ -332,38 +351,27 @@ public class EarthquakeAbility : BaseAbility
                     // ¡IMPORTANTE! Para el host, debemos iniciar manualmente el salto
                     // sin depender de los callbacks de las NetworkVariables
                     
-                    // Establecer estados explícitamente para asegurar que el salto ocurra
-                    jumpStartPosition = networkOwner.transform.position;
-                    jumpTime = 0f;
-                    isJumping = true;
-                    isFalling = false;
-                    isInImpactPause = false;
-                    syncingTransform = true;
+                    // CORRECCIÓN: Primero actualizar las variables de red y LUEGO las locales
+                    // para evitar que los callbacks de NetworkVariable sobrescriban nuestros valores
                     
-                    // Desactivar física para control manual
-                    DisablePhysicsControllers();
-                    
-                    // Importante: Configurar variables de red DESPUÉS para que otros clientes lo vean
-                    networkJumpStartPosition.Value = jumpStartPosition;
+                    // 1. Configurar las variables de red primero
+                    networkJumpStartPosition.Value = networkOwner.transform.position;
                     networkJumpDirection.Value = jumpDirection;
                     networkJumpTargetPosition.Value = jumpTargetPosition;
-                    networkIsJumping.Value = true;
-                    networkIsFalling.Value = false;
-                    networkIsInImpactPause.Value = false;
                     
-                    // Forzar actualización para que se vea inmediatamente
-                    networkCurrentPosition.Value = jumpStartPosition;
+                    // 2. Desactivar física inmediatamente
+                    DisablePhysicsControllers();
                     
-                    // Mostrar efectos visuales
+                    // 3. Esperar un frame para asegurar que se propaguen los valores iniciales
+                    StartCoroutine(DelayedJumpForHost());
+                    
+                    // 4. Mostrar efectos visuales inmediatamente
                     TriggerJumpStartVisualEffectServerRpc();
                     
-                    // ¡NO DEPENDAS DE ACTIVATECLIENTRPC PARA EL HOST!
-                    // El host debe ejecutar la lógica directamente
-                    
-                    // Notificar solo a los demás clientes
+                    // 5. Notificar a los clientes (excepto al host)
                     ActivateClientRpc(netObj.OwnerClientId, jumpDirection, jumpTargetPosition);
                     
-                    Debug.Log("[EarthquakeAbility] Host ha iniciado el salto DIRECTAMENTE");
+                    Debug.Log("[EarthquakeAbility] Host ha iniciado el salto con secuencia corregida");
                 }
             }
             else // Cliente normal no-host
@@ -377,6 +385,34 @@ public class EarthquakeAbility : BaseAbility
             // Cliente remoto viendo otro jugador
             StartJump();
         }
+    }
+    
+    // Nuevo método para ayudar con la activación del host
+    private System.Collections.IEnumerator DelayedJumpForHost()
+    {
+        // Esperar un frame para que se propaguen las variables de red
+        yield return null;
+        
+        // Establecer variables locales DESPUÉS de que las variables de red se hayan actualizado
+        jumpStartPosition = networkOwner.transform.position;
+        jumpTime = 0f;
+        
+        // Actualizar estado local
+        isJumping = true;
+        isFalling = false;
+        isInImpactPause = false;
+        syncingTransform = true;
+        
+        // Ahora activar las variables de red de estado (DESPUÉS de configurar las locales)
+        // para evitar que los callbacks interfieran
+        networkIsJumping.Value = true;
+        networkIsFalling.Value = false;
+        networkIsInImpactPause.Value = false;
+        
+        // Forzar actualización de posición actual
+        networkCurrentPosition.Value = jumpStartPosition;
+        
+        Debug.Log("[EarthquakeAbility] Host: Variables locales y de red configuradas en secuencia correcta");
     }
     
     private void SetupDirectionalJump()
@@ -611,16 +647,26 @@ public class EarthquakeAbility : BaseAbility
     
     private void UpdateJump()
     {
+        // Verificación de seguridad para detectar estados incoherentes
+        if (isJumping && jumpStartPosition == Vector3.zero)
+        {
+            Debug.LogError("[EarthquakeAbility] Error crítico: jumpStartPosition es cero mientras isJumping=true. Corrigiendo...");
+            jumpStartPosition = networkOwner.transform.position;
+        }
+        
         // Incrementar el tiempo del salto
         jumpTime += Time.deltaTime;
         
         if (isJumping)
         {
-            // IMPORTANTE: Siempre verificar este estado para depuración
+            // IMPORTANTE: Mostrar el estado para depuración
             if (Time.frameCount % 60 == 0) 
             {
                 Debug.Log($"[EarthquakeAbility] UpdateJump ACTIVO - Fase de SALTO, tiempo={jumpTime:F2}/{riseTime:F2}, " +
-                          $"IsOwner={networkOwner.IsOwner}, IsServer={networkOwner.IsServer}");
+                          $"IsOwner={networkOwner.IsOwner}, IsServer={networkOwner.IsServer}, " +
+                          $"jumpStartPosition={jumpStartPosition}, " +
+                          $"jumpDirection={jumpDirection}, " +
+                          $"jumpTargetPosition={jumpTargetPosition}");
             }
             
             // Fase de ascenso (con tiempo ajustable)
@@ -642,6 +688,17 @@ public class EarthquakeAbility : BaseAbility
                 // Aplicar desplazamiento horizontal si hay dirección
                 if (jumpDirection.magnitude > 0.01f)
                 {
+                    // Verificación de seguridad para evitar problemas con vectores cero
+                    if (jumpTargetPosition == Vector3.zero || jumpStartPosition == Vector3.zero)
+                    {
+                        // Corregir la posición objetivo si es cero
+                        if (jumpTargetPosition == Vector3.zero)
+                        {
+                            jumpTargetPosition = jumpStartPosition + jumpDirection * horizontalJumpDistance;
+                            Debug.LogWarning($"[EarthquakeAbility] jumpTargetPosition era cero, corregido a {jumpTargetPosition}");
+                        }
+                    }
+                    
                     horizontalOffset = (jumpTargetPosition - jumpStartPosition) * horizontalProgress;
                     
                     // Debug periódico (pero no spammear el log)
@@ -661,6 +718,12 @@ public class EarthquakeAbility : BaseAbility
                 if (networkOwner.IsOwner)
                 {
                     networkCurrentPosition.Value = newPosition;
+                    
+                    // Log extra para depuración en el host
+                    if (networkOwner.IsServer && Time.frameCount % 60 == 0)
+                    {
+                        Debug.Log($"[EarthquakeAbility] HOST actualizando networkCurrentPosition a {newPosition}");
+                    }
                 }
                 
                 // Guardar posición más alta cuando estemos cerca del pico
@@ -682,11 +745,20 @@ public class EarthquakeAbility : BaseAbility
                 if (jumpHighestPosition == Vector3.zero)
                 {
                     jumpHighestPosition = networkOwner.transform.position;
+                    Debug.Log($"[EarthquakeAbility] Posición más alta del salto: {jumpHighestPosition}");
                 }
                 
                 // Si somos el propietario, actualizar variables de red
                 if (networkOwner.IsOwner)
                 {
+                    // Para el host, necesitamos asegurar que las variables locales se actualicen antes
+                    // que las variables de red para evitar problemas de callbacks
+                    if (networkOwner.IsServer)
+                    {
+                        Debug.Log("[EarthquakeAbility] HOST cambiando a fase de caída");
+                    }
+                    
+                    // Importante: Las variables de red deben actualizarse DESPUÉS de las locales
                     networkIsJumping.Value = false;
                     networkIsFalling.Value = true;
                 }

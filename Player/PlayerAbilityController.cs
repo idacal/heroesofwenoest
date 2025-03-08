@@ -71,30 +71,36 @@ public class PlayerAbilityController : NetworkBehaviour
         InitializeDefaultAbilities();
     }
     
-    private void InitializeDefaultAbilities()
+    // Localiza el método InitializeDefaultAbilities() en PlayerAbilityController.cs
+// y modifícalo para incluir la nueva habilidad:
+
+private void InitializeDefaultAbilities()
+{
+    // Limpiar cualquier habilidad existente para evitar duplicados
+    RemoveAllAbilities();
+    
+    // Añadir habilidades por defecto
+    dashAbility = AddAbility<DashAbility>();
+    //earthquakeAbility = AddAbility<EarthquakeAbility>();
+    
+    // Añadir la nueva habilidad StrongJump
+    AddAbility<StrongJumpAbility>();
+    
+    // Si quieres añadir más habilidades por defecto, hazlo aquí
+    // AddAbility<OtraHabilidad>();
+    
+    // Inicializar explícitamente cada habilidad con este NetworkBehaviour
+    foreach (var ability in activeAbilities)
     {
-        // Limpiar cualquier habilidad existente para evitar duplicados
-        RemoveAllAbilities();
-        
-        // Añadir habilidades por defecto
-        dashAbility = AddAbility<DashAbility>();
-        earthquakeAbility = AddAbility<EarthquakeAbility>();
-        
-        // Si quieres añadir más habilidades por defecto, hazlo aquí
-        // AddAbility<OtraHabilidad>();
-        
-        // Inicializar explícitamente cada habilidad con este NetworkBehaviour
-        foreach (var ability in activeAbilities)
-        {
-            ability.Initialize(this);
-        }
-        
-        // Notificar que se inicializaron correctamente
-        if (IsOwner)
-        {
-            Debug.Log("[PlayerAbilityController] Habilidades inicializadas correctamente");
-        }
+        ability.Initialize(this);
     }
+    
+    // Notificar que se inicializaron correctamente
+    if (IsOwner)
+    {
+        Debug.Log("[PlayerAbilityController] Habilidades inicializadas correctamente");
+    }
+}
     
     private void Update()
     {
