@@ -14,6 +14,10 @@ public class NetworkManagerUI : MonoBehaviour
     [Header("Network Manager")]
     [SerializeField] private NetworkManager networkManager;
     
+    [Header("Connection Settings")]
+    [SerializeField] private string defaultAddress = "127.0.0.1"; // Default to localhost
+    [SerializeField] private ushort defaultPort = 7777; // Default Unity Netcode port
+    
     private bool isSubscribedToEvents = false;
     
     private void Awake()
@@ -33,6 +37,12 @@ public class NetworkManagerUI : MonoBehaviour
                 Debug.LogError("[UI] No NetworkManager found in scene!");
                 return;
             }
+        }
+        
+        // Initialize default IP in the input field if it's empty
+        if (ipAddressInput != null && string.IsNullOrWhiteSpace(ipAddressInput.text))
+        {
+            ipAddressInput.text = defaultAddress;
         }
         
         // Setup button listeners
@@ -132,17 +142,27 @@ public class NetworkManagerUI : MonoBehaviour
     
     private void UpdateTransportAddress()
     {
-        // Only change the address if an input was provided and not empty
-        if (ipAddressInput != null && !string.IsNullOrWhiteSpace(ipAddressInput.text))
+        // Get transport
+        var transport = networkManager.GetComponent<Unity.Netcode.Transports.UTP.UnityTransport>();
+        if (transport != null)
         {
-            // Get transport
-            var transport = networkManager.GetComponent<Unity.Netcode.Transports.UTP.UnityTransport>();
-            if (transport != null)
+            // Use input field text if available, otherwise use default address
+            string address = defaultAddress;
+            
+            if (ipAddressInput != null && !string.IsNullOrWhiteSpace(ipAddressInput.text))
             {
-                // Set connection data
-                transport.ConnectionData.Address = ipAddressInput.text;
-                Debug.Log($"[UI] Set connection address to: {ipAddressInput.text}");
+                address = ipAddressInput.text;
             }
+            
+            // Set connection data
+            transport.ConnectionData.Address = address;
+            transport.ConnectionData.Port = defaultPort;
+            
+            Debug.Log($"[UI] Set connection address to: {address}:{defaultPort}");
+        }
+        else
+        {
+            Debug.LogError("[UI] UnityTransport component not found on the NetworkManager!");
         }
     }
     

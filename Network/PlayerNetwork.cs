@@ -68,6 +68,9 @@ public class PlayerNetwork : NetworkBehaviour
     // Referencia a la habilidad de terremoto para verificar su estado
     private EarthquakeAbility earthquakeAbility;
     
+    // Referencia a la habilidad dash
+    private DashAbility dashAbility;
+    
     private void Awake()
     {
         // Generar ID único para este jugador para propósitos de depuración
@@ -148,7 +151,7 @@ public class PlayerNetwork : NetworkBehaviour
             }
             
             // Buscar referencia a la habilidad de terremoto
-            StartCoroutine(FindEarthquakeAbility());
+            StartCoroutine(FindAbilities());
         }
     }
     
@@ -219,12 +222,13 @@ public class PlayerNetwork : NetworkBehaviour
         }
     }
     
-    private IEnumerator FindEarthquakeAbility()
+    private IEnumerator FindAbilities()
     {
         // Esperar un poco para asegurar que las habilidades estén inicializadas
         yield return new WaitForSeconds(0.3f);
         
         earthquakeAbility = GetComponent<EarthquakeAbility>();
+        dashAbility = GetComponent<DashAbility>();
         
         if (earthquakeAbility != null)
         {
@@ -237,6 +241,19 @@ public class PlayerNetwork : NetworkBehaviour
             // Intentar una vez más
             yield return new WaitForSeconds(0.5f);
             earthquakeAbility = GetComponent<EarthquakeAbility>();
+        }
+        
+        if (dashAbility != null)
+        {
+            Debug.Log($"[PLAYER_{playerUniqueId}] Encontrada referencia a DashAbility");
+        }
+        else
+        {
+            Debug.LogWarning($"[PLAYER_{playerUniqueId}] No se encontró DashAbility, reintentando...");
+            
+            // Intentar una vez más
+            yield return new WaitForSeconds(0.5f);
+            dashAbility = GetComponent<DashAbility>();
         }
     }
     
@@ -344,6 +361,30 @@ public class PlayerNetwork : NetworkBehaviour
         Debug.Log($"[PLAYER_{playerUniqueId}] Cámara creada exitosamente: {localCameraObject.name}");
     }
     
+    // Método para verificar si alguna habilidad está controlando la posición del jugador
+    private bool IsPositionControlledByAbility()
+    {
+        bool abilityControllingPosition = false;
+        
+        // Verificar si hay habilidades activas que controlen la posición
+        if (abilityController != null)
+        {
+            // Verificar EarthquakeAbility
+            if (earthquakeAbility != null && (earthquakeAbility.IsJumping || earthquakeAbility.IsFalling || earthquakeAbility.IsInImpactPause))
+            {
+                abilityControllingPosition = true;
+            }
+            
+            // Verificar DashAbility
+            if (dashAbility != null && dashAbility.IsDashing)
+            {
+                abilityControllingPosition = true;
+            }
+        }
+        
+        return abilityControllingPosition;
+    }
+    
     private void Update()
     {
         if (IsLocalPlayer)
@@ -351,8 +392,11 @@ public class PlayerNetwork : NetworkBehaviour
             // Verificar si hay alguna pausa de habilidad activa
             bool isAbilityPaused = IsInAbilityPause();
             
-            // Solo procesar input si no estamos aturdidos ni en pausa de habilidad
-            if (canMove && !isAbilityPaused)
+            // Verificar si alguna habilidad está controlando la posición
+            bool abilityControllingPosition = IsPositionControlledByAbility();
+            
+            // Solo procesar input si no estamos aturdidos, en pausa de habilidad o con posición controlada por habilidad
+            if (canMove && !isAbilityPaused && !abilityControllingPosition)
             {
                 // Procesar input de movimiento solo para el jugador local
                 HandleMouseMovement();
@@ -363,24 +407,29 @@ public class PlayerNetwork : NetworkBehaviour
                     MoveToTargetPosition();
                 }
             }
-            else if (isAbilityPaused)
+            else
             {
-                // Si hay pausa de habilidad, cancelar cualquier movimiento
+                // Si hay algún bloqueo (pausa, aturdimiento, control por habilidad), cancelar cualquier movimiento
                 isMovingToTarget = false;
                 
-                // Log para depuración
-                if (Time.frameCount % 60 == 0) // Cada 60 frames para no saturar la consola
+                // Log para depuración pero solo de vez en cuando
+                if (Time.frameCount % 60 == 0) 
                 {
-                    Debug.Log($"[PLAYER_{playerUniqueId}] Movimiento bloqueado por pausa de habilidad");
+                    string reason = "desconocida";
+                    if (!canMove) reason = "aturdimiento";
+                    else if (isAbilityPaused) reason = "pausa de habilidad";
+                    else if (abilityControllingPosition) reason = "control de posición por habilidad";
+                    
+                    Debug.Log($"[PLAYER_{playerUniqueId}] Movimiento bloqueado por: {reason}");
                 }
                 
-                // Mientras estemos en pausa, actualizar posición al servidor
+                // Mientras estemos en pausa o controlados por habilidad, actualizar posición al servidor
                 UpdatePositionServerRpc(transform.position, transform.rotation);
             }
             
             // Cuando estemos usando físicas, actualizar la posición en el servidor
             // incluso si no estamos controlando el movimiento directamente
-            if ((!canMove || isAbilityPaused) && rb != null && rb.velocity.magnitude > 0.01f)
+            if ((!canMove || isAbilityPaused || abilityControllingPosition) && rb != null && rb.velocity.magnitude > 0.01f)
             {
                 UpdatePositionServerRpc(transform.position, transform.rotation);
             }
@@ -416,11 +465,11 @@ public class PlayerNetwork : NetworkBehaviour
     private void HandleMouseMovement()
     {
         // Si estamos aturdidos o en pausa de habilidad, no procesar movimiento
-        if (!canMove || IsInAbilityPause()) 
+        if (!canMove || IsInAbilityPause() || IsPositionControlledByAbility()) 
         {
             if (Input.GetMouseButtonDown(1))
             {
-                Debug.Log($"[PLAYER_{playerUniqueId}] Movimiento por clic bloqueado por pausa/aturdimiento");
+                Debug.Log($"[PLAYER_{playerUniqueId}] Movimiento por clic bloqueado por pausa/aturdimiento/habilidad");
             }
             return;
         }
@@ -434,10 +483,10 @@ public class PlayerNetwork : NetworkBehaviour
             // Verificar si el raycast golpea en la capa del suelo
             if (Physics.Raycast(ray, out hit, 100f, groundLayer))
             {
-                // Verificar otra vez si estamos en pausa o aturdidos
-                if (!canMove || IsInAbilityPause())
+                // Verificar otra vez si estamos en pausa o aturdidos o controlados por habilidad
+                if (!canMove || IsInAbilityPause() || IsPositionControlledByAbility())
                 {
-                    Debug.Log($"[PLAYER_{playerUniqueId}] Movimiento bloqueado en último momento por pausa/aturdimiento");
+                    Debug.Log($"[PLAYER_{playerUniqueId}] Movimiento bloqueado en último momento por pausa/aturdimiento/habilidad");
                     return;
                 }
                 
@@ -466,8 +515,8 @@ public class PlayerNetwork : NetworkBehaviour
     
     private void MoveToTargetPosition()
     {
-        // Verificar constantemente si hay pausas o aturdimientos
-        if (!canMove || IsInAbilityPause())
+        // Verificar constantemente si hay pausas o aturdimientos o control por habilidad
+        if (!canMove || IsInAbilityPause() || IsPositionControlledByAbility())
         {
             isMovingToTarget = false;
             return;
