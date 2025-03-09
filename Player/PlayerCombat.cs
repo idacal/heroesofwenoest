@@ -5,8 +5,8 @@ using System.Collections;
 public class PlayerCombat : NetworkBehaviour
 {
     [Header("Configuración de Ataque")]
-    [SerializeField] private float attackDamage = 30f;
-    [SerializeField] private float attackRange = 7f;
+    [SerializeField] private float attackDamage = 2f;
+    [SerializeField] private float attackRange = 15f;
     [SerializeField] private float attackCooldown = 0.2f;
     [SerializeField] private LayerMask playerLayer;
     
@@ -350,43 +350,28 @@ public class PlayerCombat : NetworkBehaviour
     
     // Método para lanzar proyectiles
     private void LaunchProjectile(NetworkObject target)
-    {
-        Debug.Log("🚀 SERVER: LaunchProjectile llamado");
-        
-        // Determinar posición de origen
-        Vector3 spawnPosition;
-        if (projectileSpawnPoint != null)
-        {
-            spawnPosition = projectileSpawnPoint.position;
-            Debug.Log($"🚀 SERVER: Usando punto de spawn definido: {spawnPosition}");
-        }
-        else
-        {
-            // Si no hay punto específico, usar la posición del personaje + offset
-            spawnPosition = transform.position + Vector3.up * 1.5f + transform.forward * 0.5f;
-            Debug.Log($"🚀 SERVER: Usando punto de spawn calculado: {spawnPosition}");
-        }
-        
-        // Calcular dirección hacia el objetivo
-        Vector3 direction = (target.transform.position - spawnPosition).normalized;
-        Debug.Log($"🚀 SERVER: Dirección: {direction}");
-        
-        // Spawner el proyectil en la red
-        Debug.Log("🚀 SERVER: Intentando spawner proyectil...");
-        var projectile = CombatProjectile.SpawnProjectile(
-            projectilePrefab,
-            spawnPosition,
-            direction,
-            attackDamage,
-            OwnerClientId,
-            target
-        );
-        
-        Debug.Log($"🚀 SERVER: ¿Proyectil spawneado? {(projectile != null ? "SÍ" : "NO")}");
-        
-        // Efectos visuales de lanzamiento
-        SpawnAttackEffectClientRpc(spawnPosition, direction);
-    }
+{
+    // Calcular posición de origen en el centro del jugador
+    Vector3 spawnPosition = transform.position + Vector3.up * 1.0f; // Solo añadir un poco de altura
+    
+    // Calcular dirección hacia el objetivo
+    Vector3 direction = (target.transform.position - spawnPosition).normalized;
+    
+    Debug.Log($"🚀 Lanzando proyectil desde {spawnPosition} hacia {target.transform.position}");
+    
+    // Spawner el proyectil
+    var projectile = CombatProjectile.SpawnProjectile(
+        projectilePrefab,
+        spawnPosition,
+        direction,
+        attackDamage,
+        OwnerClientId,
+        null
+    );
+    
+    // Efectos visuales de lanzamiento
+    SpawnAttackEffectClientRpc(spawnPosition, direction);
+}
 
     [ClientRpc]
     private void SpawnHitEffectClientRpc(Vector3 position)

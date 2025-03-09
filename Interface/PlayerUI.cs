@@ -204,7 +204,7 @@ public class PlayerUI : MonoBehaviour
         // Establecer directamente el target fill para la animación
         targetHealthFill = healthRatio;
         
-        Debug.Log($"[PlayerUI] Actualizando barra de vida - Actual: {currentHealth}, Max: {maxHealth}, Ratio: {healthRatio}");
+        
         
         if (healthText != null)
         {
@@ -226,7 +226,7 @@ public class PlayerUI : MonoBehaviour
         // Establecer directamente el target fill para la animación
         targetManaFill = manaRatio;
         
-        Debug.Log($"[PlayerUI] Actualizando barra de maná - Actual: {currentMana}, Max: {maxMana}, Ratio: {manaRatio}");
+        
         
         if (manaText != null)
         {

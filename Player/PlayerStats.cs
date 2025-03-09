@@ -14,6 +14,13 @@ public class PlayerStats : NetworkBehaviour
     [SerializeField] private float manaRegen = 10f; // Regeneración por segundo
     [SerializeField] private bool enableManaRegen = true;
 
+    [Header("Depuración")]
+    [SerializeField] private bool showDebugMessages = true;
+
+    // NUEVA: Variable para contar impactos recibidos (depuración)
+    public NetworkVariable<int> hitCounter = new NetworkVariable<int>(
+        0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
     // Variables de red para sincronizar vida y maná
     private NetworkVariable<float> networkHealth = new NetworkVariable<float>(
         default,
@@ -47,7 +54,7 @@ public class PlayerStats : NetworkBehaviour
     // Variables para controlar la regeneración
     private float lastRegenTime;
     
-    // Nuevas variables para efectos visuales de daño
+    // Variables para efectos visuales de daño
     private float lastDamageTime = 0f;
     private static readonly float damageIndicatorCooldown = 0.1f; // Evitar spam de indicadores
 
@@ -59,6 +66,7 @@ public class PlayerStats : NetworkBehaviour
             networkHealth.Value = maxHealth;
             networkMana.Value = maxMana;
             damageReduction.Value = 0f;
+            hitCounter.Value = 0;
             
             Debug.Log($"[PlayerStats] Jugador {OwnerClientId} inicializado con {maxHealth} HP y {maxMana} MP");
         }
@@ -67,6 +75,7 @@ public class PlayerStats : NetworkBehaviour
         networkHealth.OnValueChanged += OnHealthValueChanged;
         networkMana.OnValueChanged += OnManaValueChanged;
         damageReduction.OnValueChanged += OnDamageReductionValueChanged;
+        hitCounter.OnValueChanged += OnHitCounterChanged;
         
         // Inicializar tiempo para regeneración
         lastRegenTime = Time.time;
@@ -83,6 +92,15 @@ public class PlayerStats : NetworkBehaviour
         networkHealth.OnValueChanged -= OnHealthValueChanged;
         networkMana.OnValueChanged -= OnManaValueChanged;
         damageReduction.OnValueChanged -= OnDamageReductionValueChanged;
+        hitCounter.OnValueChanged -= OnHitCounterChanged;
+    }
+    
+    private void OnHitCounterChanged(int previousValue, int newValue)
+    {
+        if (IsOwner && showDebugMessages)
+        {
+            Debug.Log($"[PlayerStats] ¡IMPACTO RECIBIDO! Total de impactos: {newValue}");
+        }
     }
     
     private void Update()
@@ -124,6 +142,13 @@ public class PlayerStats : NetworkBehaviour
     {
         // Notificar a los componentes que se han suscrito al evento
         OnHealthChanged?.Invoke(newValue, maxHealth);
+        
+        // Mostrar información de daño si hubo una reducción de salud
+        if (newValue < previousValue && IsOwner && showDebugMessages)
+        {
+            float damageTaken = previousValue - newValue;
+            Debug.Log($"<color=red>DAÑO RECIBIDO: {damageTaken:F1}</color> - Vida restante: {newValue:F1}/{maxHealth}");
+        }
     }
     
     private void OnManaValueChanged(float previousValue, float newValue)
@@ -143,6 +168,9 @@ public class PlayerStats : NetworkBehaviour
     {
         if (!IsServer) return; // Solo el servidor puede modificar directamente estos valores
         
+        // Incrementar contador de golpes (para depuración)
+        hitCounter.Value++;
+        
         // Notificar del daño inicial (antes de reducciones)
         OnTakeDamage?.Invoke(amount);
         
@@ -151,12 +179,14 @@ public class PlayerStats : NetworkBehaviour
         
         // Calcular nueva salud y asegurar que no baje de 0
         float newHealth = Mathf.Max(networkHealth.Value - reducedAmount, 0f);
+        float previousHealth = networkHealth.Value;
         networkHealth.Value = newHealth;
         
         // Mostrar efecto visual de daño para todos
         ShowDamageEffectClientRpc(reducedAmount, transform.position);
         
-        Debug.Log($"[PlayerStats] Jugador {OwnerClientId} recibió {amount} de daño (reducido a {reducedAmount}). Vida restante: {newHealth}");
+        Debug.Log($"[PlayerStats] Jugador {OwnerClientId} recibió {amount:F1} de daño (reducido a {reducedAmount:F1}). " +
+                  $"Vida: {previousHealth:F1} -> {newHealth:F1}, Golpes recibidos: {hitCounter.Value}");
         
         // Verificar muerte (añadir lógica de muerte si la salud llega a 0)
         if (newHealth <= 0)
@@ -243,35 +273,31 @@ public class PlayerStats : NetworkBehaviour
         damageReduction.Value = 0f;
     }
 
-    // Permitir a los clientes solicitar tomar daño (para pruebas)
+    // RPCs para clientes
     [ServerRpc]
     public void TakeDamageServerRpc(float amount)
     {
         TakeDamage(amount);
     }
 
-    // Permitir a los clientes solicitar usar maná (para pruebas)
     [ServerRpc]
     public void UseManaServerRpc(float amount)
     {
         UseMana(amount);
     }
     
-    // Permitir a los clientes solicitar curación (para pruebas)
     [ServerRpc]
     public void HealServerRpc(float amount)
     {
         Heal(amount);
     }
     
-    // Permitir a los clientes solicitar restauración de maná (para pruebas)
     [ServerRpc]
     public void RestoreManaServerRpc(float amount)
     {
         RestoreMana(amount);
     }
     
-    // ServerRpc para modificar reducción de daño
     [ServerRpc]
     private void SetDamageReductionServerRpc(float reduction)
     {
@@ -284,7 +310,7 @@ public class PlayerStats : NetworkBehaviour
         ResetDamageReduction();
     }
     
-    // Nuevos métodos para efectos visuales de daño
+    // Efectos visuales de daño
     [ClientRpc]
     private void ShowDamageEffectClientRpc(float amount, Vector3 position)
     {
@@ -302,18 +328,24 @@ public class PlayerStats : NetworkBehaviour
         
         // Si hay un efecto de daño disponible, mostrarlo
         HitEffect.Create(position, Color.red);
+        
+        if (IsOwner && showDebugMessages)
+        {
+            // El jugador que recibe daño verá este mensaje
+            string criticalText = isCritical ? "¡CRÍTICO! " : "";
+            Debug.Log($"<color=red>{criticalText}Recibiste {amount:F1} de daño</color>");
+        }
     }
 
     [ClientRpc]
     private void ShowDeathEffectClientRpc(Vector3 position)
     {
         // Aquí podrías instanciar un efecto de muerte más dramático
-        // Por ejemplo, una explosión, partículas, etc.
         
         if (IsOwner)
         {
             // Mostrar mensaje más grande para el jugador que murió
-            Debug.Log("¡HAS MUERTO!");
+            Debug.Log("<color=red><size=20>¡HAS MUERTO!</size></color>");
         }
     }
 }
