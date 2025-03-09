@@ -78,6 +78,9 @@ public class PlayerNetwork : NetworkBehaviour
     // Referencia al StrongJumpAbility
     private StrongJumpAbility strongJumpAbility;
     
+    // Nueva referencia para el combate
+    private PlayerCombat playerCombat;
+    
     private void Awake()
     {
         // Generar ID único para este jugador para propósitos de depuración
@@ -99,6 +102,9 @@ public class PlayerNetwork : NetworkBehaviour
         
         // Obtener referencias al sistema de habilidades
         abilityController = GetComponent<PlayerAbilityController>();
+        
+        // Obtener referencia al sistema de combate
+        playerCombat = GetComponent<PlayerCombat>();
     }
     
     // Override para el spawn en red
@@ -454,7 +460,10 @@ public class PlayerNetwork : NetworkBehaviour
             // Solo procesar input si no estamos aturdidos, en pausa de habilidad o con posición controlada por habilidad
             if (canMove && !isAbilityPaused && !abilityControllingPosition)
             {
-                // Procesar input de movimiento solo para el jugador local
+                // NUEVO: Procesar el botón izquierdo para ataques
+                HandleMouseAttack();
+                
+                // Procesar el botón derecho para movimiento
                 HandleMouseMovement();
                 
                 // Manejar movimiento hacia posición objetivo si estamos en modo click-to-move
@@ -518,6 +527,50 @@ public class PlayerNetwork : NetworkBehaviour
         return false;
     }
     
+    // Nuevo método para manejar ataques con el botón izquierdo del mouse
+    private void HandleMouseAttack()
+    {
+        // Si estamos aturdidos o en pausa de habilidad, no procesar entrada
+        if (!canMove || IsInAbilityPause() || IsPositionControlledByAbility()) 
+        {
+            return;
+        }
+        
+        // Click izquierdo para atacar
+        if (Input.GetMouseButtonDown(0))
+        {
+            Ray ray = playerCamera != null ? playerCamera.ScreenPointToRay(Input.mousePosition) : Camera.main.ScreenPointToRay(Input.mousePosition);
+            RaycastHit hit;
+            
+            // Verificar si hacemos clic en un jugador enemigo
+            if (Physics.Raycast(ray, out hit))
+            {
+                // Verificar si el objeto golpeado es un jugador enemigo
+                NetworkObject hitNetObj = hit.collider.GetComponent<NetworkObject>();
+                
+                // Si es un NetworkObject y no somos nosotros mismos
+                if (hitNetObj != null && hitNetObj.OwnerClientId != OwnerClientId)
+                {
+                    // Verificar si el otro objeto es un jugador
+                    PlayerStats enemyStats = hitNetObj.GetComponent<PlayerStats>();
+                    
+                    if (enemyStats != null && playerCombat != null)
+                    {
+                        // Intentar procesar como ataque
+                        bool attacked = playerCombat.ProcessClickOnEnemy(hitNetObj);
+                        
+                        if (attacked)
+                        {
+                            // Procesado exitosamente como ataque
+                            Debug.Log($"[PLAYER_{playerUniqueId}] Atacando a jugador {hitNetObj.OwnerClientId}");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     private void HandleMouseMovement()
     {
         // Si estamos aturdidos o en pausa de habilidad, no procesar movimiento
@@ -530,7 +583,7 @@ public class PlayerNetwork : NetworkBehaviour
             return;
         }
         
-        // Click derecho para mover
+        // Click derecho SOLO para mover (ya no detectamos enemigos aquí)
         if (Input.GetMouseButtonDown(1))
         {
             Ray ray = playerCamera != null ? playerCamera.ScreenPointToRay(Input.mousePosition) : Camera.main.ScreenPointToRay(Input.mousePosition);
@@ -544,6 +597,12 @@ public class PlayerNetwork : NetworkBehaviour
                 {
                     Debug.Log($"[PLAYER_{playerUniqueId}] Movimiento bloqueado en último momento por pausa/aturdimiento/habilidad");
                     return;
+                }
+                
+                // NUEVO: Si estábamos siguiendo a un objetivo para atacar, cancelar
+                if (playerCombat != null)
+                {
+                    playerCombat.ClearTarget();
                 }
                 
                 // Establecer la posición objetivo y activar movimiento
@@ -833,5 +892,40 @@ public class PlayerNetwork : NetworkBehaviour
     public Vector3 GetTargetPosition()
     {
         return targetPosition;
+    }
+    
+    // Nuevos métodos para funcionalidad de combate
+    public void MoveToPositionCommand(Vector3 position)
+    {
+        // Verificar si podemos movernos
+        if (!canMove || IsInAbilityPause() || IsPositionControlledByAbility())
+            return;
+        
+        // Establecer destino
+        targetPosition = position;
+        isMovingToTarget = true;
+        
+        // Reiniciar timer de atasco
+        stuckTimer = 0f;
+        lastPosition = transform.position;
+        
+        // Notificar al servidor
+        UpdatePositionServerRpc(transform.position, transform.rotation);
+    }
+
+    public void StopMovement()
+    {
+        isMovingToTarget = false;
+        
+        // Detener físicamente al personaje
+        if (rb != null)
+        {
+            rb.velocity = Vector3.zero;
+        }
+    }
+
+    public bool CanUpdateMovement()
+    {
+        return canMove && !IsInAbilityPause() && !IsPositionControlledByAbility();
     }
 }

@@ -46,6 +46,10 @@ public class PlayerStats : NetworkBehaviour
     
     // Variables para controlar la regeneración
     private float lastRegenTime;
+    
+    // Nuevas variables para efectos visuales de daño
+    private float lastDamageTime = 0f;
+    private static readonly float damageIndicatorCooldown = 0.1f; // Evitar spam de indicadores
 
     public override void OnNetworkSpawn()
     {
@@ -149,7 +153,34 @@ public class PlayerStats : NetworkBehaviour
         float newHealth = Mathf.Max(networkHealth.Value - reducedAmount, 0f);
         networkHealth.Value = newHealth;
         
+        // Mostrar efecto visual de daño para todos
+        ShowDamageEffectClientRpc(reducedAmount, transform.position);
+        
         Debug.Log($"[PlayerStats] Jugador {OwnerClientId} recibió {amount} de daño (reducido a {reducedAmount}). Vida restante: {newHealth}");
+        
+        // Verificar muerte (añadir lógica de muerte si la salud llega a 0)
+        if (newHealth <= 0)
+        {
+            HandlePlayerDeath();
+        }
+    }
+    
+    // Método para manejar la muerte del jugador
+    private void HandlePlayerDeath()
+    {
+        // Aquí puedes implementar la lógica de muerte
+        // Por ahora, solo mostramos un mensaje de depuración
+        Debug.Log($"[PlayerStats] Jugador {OwnerClientId} ha muerto!");
+        
+        // Ejemplo: Forzar respawn si tenemos el componente
+        PlayerRespawnController respawnController = GetComponent<PlayerRespawnController>();
+        if (respawnController != null)
+        {
+            respawnController.ForceRespawn();
+        }
+        
+        // Ejemplo: Mostrar efecto de muerte
+        ShowDeathEffectClientRpc(transform.position);
     }
 
     // Método para que el servidor consuma maná
@@ -251,5 +282,38 @@ public class PlayerStats : NetworkBehaviour
     private void ResetDamageReductionServerRpc()
     {
         ResetDamageReduction();
+    }
+    
+    // Nuevos métodos para efectos visuales de daño
+    [ClientRpc]
+    private void ShowDamageEffectClientRpc(float amount, Vector3 position)
+    {
+        // No mostrar indicadores demasiado rápido (spam)
+        if (Time.time - lastDamageTime < damageIndicatorCooldown)
+            return;
+        
+        lastDamageTime = Time.time;
+        
+        // Decidir si es golpe crítico (ejemplo simplificado)
+        bool isCritical = UnityEngine.Random.value < 0.2f; // 20% de probabilidad
+        
+        // Crear indicador de daño flotante
+        DamageIndicator.Create(position, amount, isCritical);
+        
+        // Si hay un efecto de daño disponible, mostrarlo
+        HitEffect.Create(position, Color.red);
+    }
+
+    [ClientRpc]
+    private void ShowDeathEffectClientRpc(Vector3 position)
+    {
+        // Aquí podrías instanciar un efecto de muerte más dramático
+        // Por ejemplo, una explosión, partículas, etc.
+        
+        if (IsOwner)
+        {
+            // Mostrar mensaje más grande para el jugador que murió
+            Debug.Log("¡HAS MUERTO!");
+        }
     }
 }
