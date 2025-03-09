@@ -17,27 +17,71 @@ public class ClickIndicator : MonoBehaviour
     // Variables para animación
     private float animTimer = 0f;
     private bool isAnimating = false;
+    private Renderer visualRenderer; // Referencia general a cualquier tipo de renderer
     
     private void Awake()
     {
+        // MODIFICADO: Buscar cualquier tipo de renderer
         // Verificar si tenemos el SpriteRenderer
         if (spriteRenderer == null)
         {
             spriteRenderer = GetComponent<SpriteRenderer>();
+        }
+        
+        // Si no hay SpriteRenderer, buscar cualquier renderer (MeshRenderer, etc.)
+        if (spriteRenderer == null)
+        {
+            visualRenderer = GetComponent<Renderer>();
             
-            if (spriteRenderer == null)
+            if (visualRenderer == null)
             {
-                Debug.LogError("ClickIndicator: No se encontró SpriteRenderer!");
+                // MODIFICADO: En lugar de error, crear un componente visual básico
+                Debug.LogWarning("ClickIndicator: No se encontró Renderer. Creando MeshRenderer básico.");
+                CreateBasicVisualElement();
             }
         }
+        else
+        {
+            // Usar SpriteRenderer como renderer visual
+            visualRenderer = spriteRenderer;
+        }
+    }
+    
+    // NUEVO: Método para crear un elemento visual básico si no hay renderer
+    private void CreateBasicVisualElement()
+    {
+        // Crear un objeto visual simple (un quad)
+        GameObject quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        quad.transform.SetParent(transform);
+        quad.transform.localPosition = new Vector3(0, 0.01f, 0); // Ligeramente por encima del suelo
+        quad.transform.localRotation = Quaternion.Euler(90, 0, 0); // Rotación para que sea horizontal
+        
+        // Configurar un material básico
+        visualRenderer = quad.GetComponent<MeshRenderer>();
+        Material material = new Material(Shader.Find("Standard"));
+        material.color = indicatorColor;
+        
+        // Hacer el material transparente
+        material.SetFloat("_Mode", 3); // Transparent mode
+        material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        material.SetInt("_ZWrite", 0);
+        material.DisableKeyword("_ALPHATEST_ON");
+        material.EnableKeyword("_ALPHABLEND_ON");
+        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        material.renderQueue = 3000;
+        
+        visualRenderer.material = material;
     }
     
     private void Start()
     {
         // Inicialmente invisible
-        if (spriteRenderer != null)
+        if (visualRenderer != null)
         {
-            spriteRenderer.color = new Color(indicatorColor.r, indicatorColor.g, indicatorColor.b, 0f);
+            Color tempColor = visualRenderer.material.color;
+            tempColor.a = 0f;
+            visualRenderer.material.color = tempColor;
         }
         
         // Inicializar con escala cero
@@ -49,7 +93,7 @@ public class ClickIndicator : MonoBehaviour
     
     private void Update()
     {
-        if (isAnimating)
+        if (isAnimating && visualRenderer != null)
         {
             // Incrementar timer
             animTimer += Time.deltaTime;
@@ -63,12 +107,9 @@ public class ClickIndicator : MonoBehaviour
             transform.localScale = new Vector3(currentSize, 0.01f, currentSize);
             
             // Animar transparencia (efecto de desvanecimiento)
-            if (spriteRenderer != null)
-            {
-                Color currentColor = spriteRenderer.color;
-                currentColor.a = Mathf.Lerp(indicatorColor.a, 0f, Mathf.Pow(progress, fadeSpeed));
-                spriteRenderer.color = currentColor;
-            }
+            Color currentColor = visualRenderer.material.color;
+            currentColor.a = Mathf.Lerp(indicatorColor.a, 0f, Mathf.Pow(progress, fadeSpeed));
+            visualRenderer.material.color = currentColor;
             
             // Finalizar animación
             if (progress >= 1.0f)
@@ -82,6 +123,9 @@ public class ClickIndicator : MonoBehaviour
     // Método público para mostrar el indicador en una posición
     public void ShowAt(Vector3 position)
     {
+        // Si no tenemos renderer, no hacer nada
+        if (visualRenderer == null) return;
+        
         // Ajustar posición (ligeramente por encima del suelo para evitar z-fighting)
         position.y += 0.01f;
         transform.position = position;
@@ -93,10 +137,12 @@ public class ClickIndicator : MonoBehaviour
         // Establecer escala inicial
         transform.localScale = new Vector3(initialSize, 0.01f, initialSize);
         
-        if (spriteRenderer != null)
-        {
-            spriteRenderer.color = indicatorColor;
-        }
+        Color tempColor = visualRenderer.material.color;
+        tempColor.r = indicatorColor.r;
+        tempColor.g = indicatorColor.g;
+        tempColor.b = indicatorColor.b;
+        tempColor.a = indicatorColor.a;
+        visualRenderer.material.color = tempColor;
         
         // Activar el objeto
         gameObject.SetActive(true);
