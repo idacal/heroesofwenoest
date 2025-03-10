@@ -11,6 +11,9 @@ public class CombatProjectile : NetworkBehaviour
     [SerializeField] private float homingStrength = 5f;
     [SerializeField] private float damage = 2f;
     
+    [Header("Tiempo de Vida")]
+    [SerializeField] private float maxLifetime = 3f;
+    
     [Header("Efectos Visuales")]
     [SerializeField] private GameObject impactEffectPrefab;
     [SerializeField] private TrailRenderer trailRenderer;
@@ -32,36 +35,51 @@ public class CombatProjectile : NetworkBehaviour
     private float distanceTraveled = 0f;
     private bool hasHit = false;
     
-public override void OnNetworkSpawn()
-{
-    base.OnNetworkSpawn();
+    // Variables para dirección local
+    private Vector3 localMoveDirection;
+    private bool directionInitialized = false;
+    private float creationTime;
     
-    // Guardar posición inicial
-    startPosition = transform.position;
-    
-    // Inicializar orientación del proyectil
-    if (networkDirection.Value != Vector3.zero)
+    void Start()
     {
-        Debug.Log($"Proyectil: Orientando hacia {networkDirection.Value} al spawnearse");
-        transform.forward = networkDirection.Value;
-    }
-    else
-    {
-        Debug.LogError("Proyectil: networkDirection es cero al spawnearse!");
+        // Guardar tiempo de creación
+        creationTime = Time.time;
+        
+        // Programar destrucción automática después del tiempo máximo de vida
+        Destroy(gameObject, maxLifetime);
     }
     
-    // Buscar referencia al objetivo si es un proyectil homing
-    if (homing && networkTargetId.Value != ulong.MaxValue)
+    public override void OnNetworkSpawn()
     {
-        FindTargetObject();
+        base.OnNetworkSpawn();
+        
+        // Guardar posición inicial
+        startPosition = transform.position;
+        
+        // Inicializar orientación del proyectil
+        if (networkDirection.Value != Vector3.zero)
+        {
+            transform.forward = networkDirection.Value;
+        }
+        
+        // Buscar referencia al objetivo si es un proyectil homing
+        if (homing && networkTargetId.Value != ulong.MaxValue)
+        {
+            FindTargetObject();
+        }
+        
+        // Iniciar sistemas de partículas si existen
+        if (particleSystem != null)
+        {
+            particleSystem.Play();
+        }
+        
+        // En el servidor, programar destrucción automática
+        if (IsServer)
+        {
+            Invoke("DestroyProjectile", maxLifetime);
+        }
     }
-    
-    // Iniciar sistemas de partículas si existen
-    if (particleSystem != null)
-    {
-        particleSystem.Play();
-    }
-}
     
     private void FindTargetObject()
     {
@@ -95,79 +113,102 @@ public override void OnNetworkSpawn()
     }
     
     private void Update()
-{
-    // Si ya golpeó a algo, no hacer nada
-    if (hasHit) return;
-    
-    // Usar dirección local en lugar de la variable de red
-    Vector3 moveDirection = directionInitialized ? localMoveDirection : transform.forward;
-    
-    // Depuración periódica
-    if (Time.frameCount % 60 == 0)
     {
-        Debug.Log($"Proyectil en {transform.position}, usando dirección {moveDirection}");
+        // Si ya golpeó a algo, no hacer nada
+        if (hasHit) return;
+        
+        // Verificar tiempo de vida
+        if (Time.time - creationTime > maxLifetime && IsServer)
+        {
+            DestroyProjectile();
+            return;
+        }
+        
+        // Usar dirección local en lugar de la variable de red
+        Vector3 moveDirection = directionInitialized ? localMoveDirection : transform.forward;
+        
+        // Mover el proyectil
+        transform.position += moveDirection * speed * Time.deltaTime;
+        transform.forward = moveDirection; // Mantener la orientación
+        
+        // Actualizar distancia recorrida
+        distanceTraveled += speed * Time.deltaTime;
+        
+        // Destruir si ha recorrido la distancia máxima
+        if (distanceTraveled >= maxDistance && IsServer)
+        {
+            DestroyProjectile();
+        }
     }
     
-    // Eliminar casi todo el código de homing, dejando solo esto:
-    
-    // Mover el proyectil
-    transform.position += moveDirection * speed * Time.deltaTime;
-    transform.forward = moveDirection; // Mantener la orientación
-    
-    // Actualizar distancia recorrida
-    distanceTraveled += speed * Time.deltaTime;
-    
-    // Destruir si ha recorrido la distancia máxima
-    if (distanceTraveled >= maxDistance)
+    private void OnTriggerEnter(Collider other)
     {
+        // Si ya golpeó algo o no somos el servidor, no hacer nada
+        if (hasHit || !IsServer) return;
+        
+        // Verificar si es un jugador y no es el lanzador
+        NetworkObject hitNetObj = other.GetComponent<NetworkObject>();
+        if (hitNetObj != null && hitNetObj.OwnerClientId != networkOwnerId.Value)
+        {
+            // Verificar si tiene estadísticas de jugador
+            PlayerStats targetStats = hitNetObj.GetComponent<PlayerStats>();
+            if (targetStats != null)
+            {
+                // Marcar como golpeado para evitar golpear varias veces
+                hasHit = true;
+                
+                // Aplicar daño
+                targetStats.TakeDamage(damage);
+                
+                // Mostrar efecto de impacto
+                Vector3 impactPosition = transform.position;
+                SpawnImpactEffectClientRpc(impactPosition);
+                
+                // Destruir el proyectil después de un breve retraso para que se vea el efecto
+                StartCoroutine(DestroyAfterEffect(0.1f));
+            }
+        }
+    }
+    
+    // MÉTODO PRINCIPAL PARA DESTRUIR EL PROYECTIL
+    private void DestroyProjectile()
+    {
+        // Si ya está marcado como golpeado, no hacer nada más
+        if (hasHit) return;
+        
         if (IsServer)
         {
-            // Destruir en la red
-            NetworkObject.Despawn(true);
+            // 1. Avisar a los clientes para que muestren efectos de desaparición
+            DestroyVisualEffectsClientRpc();
+            
+            // 2. Despawnear de la red
+            if (NetworkObject != null && NetworkObject.IsSpawned)
+            {
+                NetworkObject.Despawn();
+            }
+            
+            // 3. IMPORTANTE: Destruir el GameObject explícitamente
+            // Esto destruirá tanto el objeto padre como todos sus hijos
+            Destroy(gameObject);
         }
     }
-}
     
-private void OnTriggerEnter(Collider other)
-{
-    // Si ya golpeó algo o no somos el servidor, no hacer nada
-    if (hasHit || !IsServer) return;
-    
-    Debug.Log($"Proyectil colisionó con: {other.gameObject.name}");
-    
-    // Verificar si es un jugador y no es el lanzador
-    NetworkObject hitNetObj = other.GetComponent<NetworkObject>();
-    if (hitNetObj != null && hitNetObj.OwnerClientId != networkOwnerId.Value)
+    [ClientRpc]
+    private void DestroyVisualEffectsClientRpc()
     {
-        // Verificar si tiene estadísticas de jugador
-        PlayerStats targetStats = hitNetObj.GetComponent<PlayerStats>();
-        if (targetStats != null)
+        // Detener emisión de partículas
+        if (particleSystem != null)
         {
-            // Marcar como golpeado para evitar golpear varias veces
-            hasHit = true;
-            
-            Debug.Log($"¡Impacto exitoso! Aplicando {damage} de daño a jugador {hitNetObj.OwnerClientId}");
-            
-            // Aplicar daño
-            targetStats.TakeDamage(damage);
-            
-            // Mostrar efecto de impacto
-            Vector3 impactPosition = transform.position;
-            SpawnImpactEffectClientRpc(impactPosition);
-            
-            // Destruir el proyectil después de un breve retraso para que se vea el efecto
-            StartCoroutine(DestroyAfterEffect(0.1f));
+            var emission = particleSystem.emission;
+            emission.enabled = false;
         }
-        else
+        
+        // Detener el trail si existe
+        if (trailRenderer != null)
         {
-            Debug.Log("El objeto golpeado no tiene PlayerStats");
+            trailRenderer.emitting = false;
         }
     }
-    else
-    {
-        Debug.Log("El objeto golpeado no es un jugador válido o es el lanzador");
-    }
-}
     
     [ClientRpc]
     private void SpawnImpactEffectClientRpc(Vector3 position)
@@ -192,102 +233,100 @@ private void OnTriggerEnter(Collider other)
         }
     }
     
-private IEnumerator DestroyAfterEffect(float delay)
-{
-    // Desactivar el collider inmediatamente para evitar múltiples colisiones
-    Collider col = GetComponent<Collider>();
-    if (col != null) col.enabled = false;
-    
-    // Detener emisión de partículas
-    if (particleSystem != null)
+    private IEnumerator DestroyAfterEffect(float delay)
     {
-        var emission = particleSystem.emission;
-        emission.enabled = false;
-    }
-    
-    // Detener el trail si existe
-    if (trailRenderer != null)
-    {
-        trailRenderer.emitting = false;
-    }
-    
-    // Esperar un breve momento para que se vea el efecto
-    yield return new WaitForSeconds(delay);
-    
-    Debug.Log("Destruyendo proyectil después de impacto");
-    
-    // Destruir en la red
-    if (IsServer)
-    {
-        NetworkObject.Despawn(true);
-    }
-}
-    
-    // Métodos para inicializar el proyectil// Agrega estos campos al inicio de la clase CombatProjectile
-private Vector3 localMoveDirection;
-private bool directionInitialized = false;
-
-public void Initialize(Vector3 direction, float damage, ulong ownerId, NetworkObject target = null)
-{
-    // Guardar la dirección localmente para usarla independientemente de la red
-    localMoveDirection = direction.normalized;
-    directionInitialized = true;
-    
-    if (IsServer)
-    {
-        // También establecer variables de red para compatibilidad
-        networkDirection.Value = direction.normalized;
-        this.damage = damage;
-        networkOwnerId.Value = ownerId;
+        // Desactivar el collider inmediatamente para evitar múltiples colisiones
+        Collider col = GetComponent<Collider>();
+        if (col != null) col.enabled = false;
         
-        if (target != null)
+        // Detener emisión de partículas
+        if (particleSystem != null)
         {
-            networkTargetId.Value = target.OwnerClientId;
-            // Comentamos esta línea para evitar el homing
-            // homing = true;
+            var emission = particleSystem.emission;
+            emission.enabled = false;
+        }
+        
+        // Detener el trail si existe
+        if (trailRenderer != null)
+        {
+            trailRenderer.emitting = false;
+        }
+        
+        // Esperar un breve momento para que se vea el efecto
+        yield return new WaitForSeconds(delay);
+        
+        // Destruir en la red
+        if (IsServer)
+        {
+            DestroyProjectile();
         }
     }
     
-    // Orientar el proyectil inmediatamente, sin esperar a OnNetworkSpawn
-    transform.forward = direction.normalized;
+    public void Initialize(Vector3 direction, float damage, ulong ownerId, NetworkObject target = null)
+    {
+        // Guardar la dirección localmente para usarla independientemente de la red
+        localMoveDirection = direction.normalized;
+        directionInitialized = true;
+        
+        if (IsServer)
+        {
+            // También establecer variables de red para compatibilidad
+            networkDirection.Value = direction.normalized;
+            this.damage = damage;
+            networkOwnerId.Value = ownerId;
+            
+            if (target != null)
+            {
+                networkTargetId.Value = target.OwnerClientId;
+            }
+        }
+        
+        // Orientar el proyectil inmediatamente, sin esperar a OnNetworkSpawn
+        transform.forward = direction.normalized;
+    }
     
-    Debug.Log($"Proyectil inicializado con dirección: {direction.normalized}, " +
-              $"forward ahora es: {transform.forward}");
-}
+    // MÉTODO DE LIMPIEZA AL DESTRUIR
+    private void OnDestroy()
+    {
+        // Cancelar cualquier invocación pendiente
+        CancelInvoke();
+        
+        // Detener todas las corrutinas
+        StopAllCoroutines();
+        
+        // Para debugging
+        Debug.Log($"Proyectil destruido: {gameObject.name}");
+    }
     
     // Método estático para crear un proyectil desde el servidor
     public static CombatProjectile SpawnProjectile(GameObject prefab, Vector3 position, Vector3 direction, 
                                              float damage, ulong ownerId, NetworkObject target = null)
-{
-    // Solo el servidor puede spawner objetos en red
-    if (!NetworkManager.Singleton.IsServer) return null;
-    
-    // IMPORTANTE: Crear el proyectil con la rotación específica hacia la dirección
-    GameObject projectileObject = Instantiate(prefab, position, Quaternion.LookRotation(direction));
-    
-    // Imprimir información de depuración
-    Debug.Log($"Proyectil creado en {position}, rotación: {Quaternion.LookRotation(direction)}, " +
-              $"dirección: {direction}, forward: {projectileObject.transform.forward}");
-    
-    // Obtener el componente de red
-    NetworkObject netObj = projectileObject.GetComponent<NetworkObject>();
-    if (netObj == null)
     {
-        Debug.LogError("El prefab del proyectil no tiene NetworkObject!");
-        Destroy(projectileObject);
-        return null;
+        // Solo el servidor puede spawner objetos en red
+        if (!NetworkManager.Singleton.IsServer) return null;
+        
+        // IMPORTANTE: Crear el proyectil con la rotación específica hacia la dirección
+        GameObject projectileObject = Instantiate(prefab, position, Quaternion.LookRotation(direction));
+        
+        // Obtener el componente de red
+        NetworkObject netObj = projectileObject.GetComponent<NetworkObject>();
+        if (netObj == null)
+        {
+            Debug.LogError("El prefab del proyectil no tiene NetworkObject!");
+            Destroy(projectileObject);
+            return null;
+        }
+        
+        // Spawner en la red
+        netObj.Spawn();
+        
+        // Inicializar el proyectil
+        CombatProjectile projectile = projectileObject.GetComponent<CombatProjectile>();
+        if (projectile != null)
+        {
+            projectile.Initialize(direction, damage, ownerId, target);
+        }
+        
+        return projectile;
     }
-    
-    // Spawner en la red
-    netObj.Spawn();
-    
-    // Inicializar el proyectil
-    CombatProjectile projectile = projectileObject.GetComponent<CombatProjectile>();
-    if (projectile != null)
-    {
-        projectile.Initialize(direction, damage, ownerId, target);
-    }
-    
-    return projectile;
-}
 }
