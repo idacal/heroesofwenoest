@@ -167,57 +167,81 @@ public class CombatProjectile : NetworkBehaviour
         }
     }
     
-   private void OnTriggerEnter(Collider other)
-{
-    // CRUCIAL: Solo el servidor procesa colisiones
-    if (!IsServer || hasHit.Value) return;
-    
-    // Log detallado para TODAS las colisiones
-    Debug.Log($"[Proyectil] Colisión con: {other.name}, tag: {other.tag}, " +
-              $"layer: {LayerMask.LayerToName(other.gameObject.layer)}, " +
-              $"isServer: {IsServer}, " +
-              $"ID: {NetworkObjectId}");
-    
-    // Verificar si es un jugador válido para colisionar
-    NetworkObject hitNetObj = other.GetComponent<NetworkObject>();
-    if (hitNetObj != null)
+    private void OnTriggerEnter(Collider other)
     {
-        // Verificar si es un jugador distinto al emisor
-        if (hitNetObj.OwnerClientId != networkOwnerId.Value)
+        // CRUCIAL: Solo el servidor procesa colisiones
+        if (!IsServer || hasHit.Value) return;
+        
+        // Log detallado para TODAS las colisiones
+        Debug.Log($"[Proyectil] Colisión con: {other.name}, tag: {other.tag}, " +
+                $"layer: {LayerMask.LayerToName(other.gameObject.layer)}, " +
+                $"isServer: {IsServer}, " +
+                $"ID: {NetworkObjectId}");
+        
+        // Verificar si es un jugador válido para colisionar
+        NetworkObject hitNetObj = other.GetComponent<NetworkObject>();
+        if (hitNetObj != null)
         {
-            PlayerStats targetStats = hitNetObj.GetComponent<PlayerStats>();
-            if (targetStats != null)
+            // Verificar si es un jugador distinto al emisor
+            if (hitNetObj.OwnerClientId != networkOwnerId.Value)
             {
-                // Marcar como golpeado
-                hasHit.Value = true;
-                
-                Debug.Log($"[Proyectil] ¡IMPACTO VÁLIDO! Jugador {hitNetObj.OwnerClientId}. Aplicando {damage} daño");
-                
-                // Aplicar daño
-                targetStats.TakeDamage(damage);
-                
-                // Mostrar efecto y destruir
-                Vector3 impactPosition = transform.position;
-                SpawnImpactEffectClientRpc(impactPosition);
-                
-                // Destruir con retraso para mostrar efectos
-                StartCoroutine(DelayedServerDestroy(0.1f));
+                PlayerStats targetStats = hitNetObj.GetComponent<PlayerStats>();
+                if (targetStats != null)
+                {
+                    // Marcar como golpeado
+                    hasHit.Value = true;
+                    
+                    Debug.Log($"[Proyectil] ¡IMPACTO VÁLIDO! Jugador {hitNetObj.OwnerClientId}. Aplicando {damage} daño");
+                    
+                    // Aplicar daño
+                    targetStats.TakeDamage(damage);
+                    
+                    // NUEVO: Aplicar repulsión física al jugador impactado
+                    ApplyImpactRepulsionToPlayer(hitNetObj);
+                    
+                    // Mostrar efecto y destruir
+                    Vector3 impactPosition = transform.position;
+                    SpawnImpactEffectClientRpc(impactPosition);
+                    
+                    // Destruir con retraso para mostrar efectos
+                    StartCoroutine(DelayedServerDestroy(0.1f));
+                }
+                else
+                {
+                    Debug.Log($"[Proyectil] El objeto tiene NetworkObject pero no PlayerStats: {other.name}");
+                }
             }
             else
             {
-                Debug.Log($"[Proyectil] El objeto tiene NetworkObject pero no PlayerStats: {other.name}");
+                Debug.Log($"[Proyectil] Ignorando colisión con el emisor del proyectil");
             }
         }
         else
         {
-            Debug.Log($"[Proyectil] Ignorando colisión con el emisor del proyectil");
+            Debug.Log($"[Proyectil] El objeto no tiene NetworkObject: {other.name}");
         }
     }
-    else
+    
+    // NUEVO: Método para aplicar repulsión física al jugador impactado
+    private void ApplyImpactRepulsionToPlayer(NetworkObject targetPlayer)
     {
-        Debug.Log($"[Proyectil] El objeto no tiene NetworkObject: {other.name}");
+        // Calcular dirección de repulsión (desde el proyectil hacia el jugador)
+        Vector3 repulsionDirection = (targetPlayer.transform.position - transform.position).normalized;
+        
+        // Calcular fuerza en función del daño (esto puede ajustarse)
+        float repulsionForce = damage * 1.5f; // Escalar fuerza según el daño
+        
+        // Aplicar vector de fuerza
+        Vector3 impactForce = repulsionDirection * repulsionForce;
+        
+        // Obtener el componente PlayerNetwork y aplicar la repulsión
+        PlayerNetwork playerNetwork = targetPlayer.GetComponent<PlayerNetwork>();
+        if (playerNetwork != null)
+        {
+            // Llamar al nuevo método RPC para aplicar repulsión
+            playerNetwork.ApplyImpactForceServerRpc(impactForce);
+        }
     }
-}
     
     // IMPORTANTE: Este método solo debe llamarse desde el servidor
     private void ServerDestroyProjectile()

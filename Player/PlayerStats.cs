@@ -6,7 +6,7 @@ public class PlayerStats : NetworkBehaviour
 {
     [Header("Health Settings")]
     [SerializeField] private float maxHealth = 1000f;
-    [SerializeField] private float healthRegen = 5f; // Regeneración por segundo
+    [SerializeField] private float healthRegen = 0.5f; // Regeneración por segundo
     [SerializeField] private bool enableHealthRegen = true;
     
     [Header("Mana Settings")]

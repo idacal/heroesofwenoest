@@ -194,7 +194,7 @@ public class PlayerNetwork : NetworkBehaviour
     }
     
     [ClientRpc]
-    private void SyncTransformClientRpc(Vector3 position, Quaternion rotation)
+    public void SyncTransformClientRpc(Vector3 position, Quaternion rotation)
     {
         Debug.Log($"[PLAYER_{playerUniqueId}] SyncTransformClientRpc: Cliente recibió posición {position}");
         
@@ -222,7 +222,7 @@ public class PlayerNetwork : NetworkBehaviour
     
     // NUEVO: Método para validar la posición con el servidor
     [ServerRpc]
-    private void ValidatePositionServerRpc(Vector3 clientPosition)
+    public void ValidatePositionServerRpc(Vector3 clientPosition)
     {
         if (!IsServer) return;
         
@@ -327,7 +327,7 @@ public class PlayerNetwork : NetworkBehaviour
     
     // NUEVO: ServerRpc para habilitar/deshabilitar el control del jugador
     [ServerRpc]
-    private void SetPlayerControlEnabledServerRpc(bool enabled)
+    public void SetPlayerControlEnabledServerRpc(bool enabled)
     {
         playerControlEnabled.Value = enabled;
     }
@@ -709,7 +709,7 @@ public class PlayerNetwork : NetworkBehaviour
     }
     
     [ServerRpc]
-    private void HandleCollisionServerRpc(ulong otherPlayerId)
+    public void HandleCollisionServerRpc(ulong otherPlayerId)
     {
         // Obtener el objeto del otro jugador usando el NetworkManager
         NetworkObject otherPlayerObj = NetworkManager.Singleton.ConnectedClients[otherPlayerId].PlayerObject;
@@ -742,7 +742,7 @@ public class PlayerNetwork : NetworkBehaviour
     }
     
     [ServerRpc]
-    private void SetStunStatusServerRpc(bool status)
+    public void SetStunStatusServerRpc(bool status)
     {
         // Actualizar la variable de red
         isStunned.Value = status;
@@ -767,7 +767,7 @@ public class PlayerNetwork : NetworkBehaviour
     }
     
     [ClientRpc]
-    private void ApplyRepulsionClientRpc(Vector3 force)
+    public void ApplyRepulsionClientRpc(Vector3 force)
     {
         // Si soy el propietario, aplicar la fuerza al rigidbody
         if (IsOwner && rb != null)
@@ -806,7 +806,7 @@ public class PlayerNetwork : NetworkBehaviour
     }
     
     [ClientRpc]
-    private void SpawnCollisionEffectClientRpc(Vector3 position)
+    public void SpawnCollisionEffectClientRpc(Vector3 position)
     {
         // Solo crear el efecto visual si tenemos un prefab asignado
         if (collisionEffectPrefab != null)
@@ -815,8 +815,91 @@ public class PlayerNetwork : NetworkBehaviour
         }
     }
     
+    // MÉTODOS NUEVOS PARA MANEJO DE IMPACTO DE PROYECTIL //
+    
+    // Método ServerRpc para aplicar fuerza de impacto (llamado desde CombatProjectile)
+    [ServerRpc(RequireOwnership = false)]
+    public void ApplyImpactForceServerRpc(Vector3 force)
+    {
+        // Solo el servidor procesa este método
+        if (!IsServer) return;
+
+        Debug.Log($"[PLAYER_{playerUniqueId}] Servidor aplicando fuerza de impacto: {force.magnitude}");
+        
+        // Notificar a todos los clientes sobre el impacto
+        ApplyImpactForceClientRpc(force);
+        
+        // Detener cualquier movimiento actual
+        isMovingToTarget = false;
+        
+        // Actualizar posición en las variables de red después de aplicar la fuerza
+        // Programar actualizaciones de posición continuas por un tiempo
+        StartCoroutine(SyncPositionAggressivelyAfterImpact());
+    }
+
+    [ClientRpc]
+    public void ApplyImpactForceClientRpc(Vector3 force)
+    {
+        Debug.Log($"[PLAYER_{playerUniqueId}] Cliente recibió fuerza de impacto: {force.magnitude}");
+        
+        // Aplicar la fuerza al Rigidbody
+        if (rb != null)
+        {
+            // Detener cualquier movimiento actual
+            isMovingToTarget = false;
+            
+            // Detener velocidad actual
+            rb.velocity = Vector3.zero;
+            
+            // Aplicar nueva fuerza
+            rb.AddForce(force, ForceMode.Impulse);
+            
+            // Si somos el propietario, necesitamos sincronizar nuestra posición
+            if (IsOwner)
+            {
+                StartCoroutine(SyncOwnerPositionAfterImpact());
+            }
+        }
+    }
+
+    // Método especial para sincronizar la posición del propietario después de un impacto
+    private IEnumerator SyncOwnerPositionAfterImpact()
+    {
+        // Enviar actualizaciones frecuentes al servidor
+        float syncDuration = 2.0f;  // Duración total de la sincronización agresiva
+        float syncInterval = 0.05f; // Intervalo entre actualizaciones (50ms = 20 veces por segundo)
+        float timer = 0f;
+        
+        while (timer < syncDuration)
+        {
+            // Enviar posición al servidor
+            UpdatePositionServerRpc(transform.position, transform.rotation);
+            
+            yield return new WaitForSeconds(syncInterval);
+            timer += syncInterval;
+        }
+    }
+
+    // Método en el servidor para sincronizar la posición con más frecuencia después de un impacto
+    private IEnumerator SyncPositionAggressivelyAfterImpact()
+    {
+        float syncDuration = 2.0f;  // Duración total de la sincronización agresiva
+        float syncInterval = 0.05f; // Intervalo entre actualizaciones
+        float timer = 0f;
+        
+        while (timer < syncDuration)
+        {
+            // Actualizar las variables de red con la posición actual
+            networkPosition.Value = transform.position;
+            networkRotation.Value = transform.rotation;
+            
+            yield return new WaitForSeconds(syncInterval);
+            timer += syncInterval;
+        }
+    }
+    
     [ServerRpc]
-    private void UpdatePositionServerRpc(Vector3 newPosition, Quaternion newRotation)
+    public void UpdatePositionServerRpc(Vector3 newPosition, Quaternion newRotation)
     {
         // Actualizar variables de red (solo en el servidor)
         networkPosition.Value = newPosition;
