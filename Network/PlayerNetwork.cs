@@ -708,38 +708,91 @@ public class PlayerNetwork : NetworkBehaviour
         }
     }
     
-    [ServerRpc]
-    public void HandleCollisionServerRpc(ulong otherPlayerId)
+// En la clase PlayerNetwork.cs, modifica el método HandleCollisionServerRpc:
+
+[ServerRpc]
+public void HandleCollisionServerRpc(ulong otherPlayerId)
+{
+    // Obtener el objeto del otro jugador usando el NetworkManager
+    NetworkObject otherPlayerObj = NetworkManager.Singleton.ConnectedClients[otherPlayerId].PlayerObject;
+    
+    if (otherPlayerObj != null)
     {
-        // Obtener el objeto del otro jugador usando el NetworkManager
-        NetworkObject otherPlayerObj = NetworkManager.Singleton.ConnectedClients[otherPlayerId].PlayerObject;
+        PlayerNetwork otherPlayer = otherPlayerObj.GetComponent<PlayerNetwork>();
         
-        if (otherPlayerObj != null)
+        if (otherPlayer != null)
         {
-            PlayerNetwork otherPlayer = otherPlayerObj.GetComponent<PlayerNetwork>();
+            // Cálculo de dirección de repulsión
+            Vector3 repulsionDirection = (transform.position - otherPlayerObj.transform.position).normalized;
+            repulsionDirection.y = 0; // Mantener la repulsión en el plano horizontal
             
-            if (otherPlayer != null)
+            // Aplicar repulsión
+            ApplyRepulsionClientRpc(repulsionDirection * repulsionForce);
+            otherPlayer.ApplyRepulsionClientRpc(-repulsionDirection * repulsionForce);
+            
+            // Aturdir a ambos jugadores
+            SetStunStatusServerRpc(true);
+            otherPlayer.SetStunStatusServerRpc(true);
+            
+            // NUEVO: Aplicar daño a ambos jugadores
+            PlayerStats myStats = GetComponent<PlayerStats>();
+            PlayerStats otherStats = otherPlayerObj.GetComponent<PlayerStats>();
+            
+            if (myStats != null && otherStats != null)
             {
-                // Cálculo de dirección de repulsión
-                Vector3 repulsionDirection = (transform.position - otherPlayerObj.transform.position).normalized;
-                repulsionDirection.y = 0; // Mantener la repulsión en el plano horizontal
-                // Aplicar repulsión
-                ApplyRepulsionClientRpc(repulsionDirection * repulsionForce);
-                otherPlayer.ApplyRepulsionClientRpc(-repulsionDirection * repulsionForce);
+                // Calcular daño basado en velocidad relativa para un impacto más realista
+                float relativeSpeed = 0f;
                 
-                // Aturdir a ambos jugadores
-                SetStunStatusServerRpc(true);
-                otherPlayer.SetStunStatusServerRpc(true);
+                // Si ambos tienen rigidbody, usar la velocidad relativa
+                Rigidbody myRb = GetComponent<Rigidbody>();
+                Rigidbody otherRb = otherPlayerObj.GetComponent<Rigidbody>();
                 
-                // Aplicar daño si existe el componente PlayerStats
-                // Aquí podrías agregar lógica adicional para ajustar el daño según habilidades, etc.
-                float damage = collisionDamage;
+                if (myRb != null && otherRb != null)
+                {
+                    // Calcular velocidad relativa entre los dos jugadores
+                    relativeSpeed = Vector3.Distance(myRb.velocity, otherRb.velocity);
+                }
                 
-                // Aplicar efecto visual (opcional)
-                SpawnCollisionEffectClientRpc(transform.position + (repulsionDirection * 0.5f));
+                // Calcular daño base + componente de velocidad
+                float damageAmount = collisionDamage;
+                if (relativeSpeed > 1.0f)
+                {
+                    // Añadir bonus por velocidad (más rápido = más daño)
+                    damageAmount += relativeSpeed * 0.5f;
+                }
+                
+                // Log para depuración
+                Debug.Log($"[Colisión] Aplicando {damageAmount} de daño entre jugadores {OwnerClientId} y {otherPlayerId}");
+                
+                // Aplicar daño a ambos
+                myStats.TakeDamage(damageAmount);
+                otherStats.TakeDamage(damageAmount);
+                
+                // OPCIONAL: Notificar a los clientes sobre el daño
+                NotifyCollisionDamageClientRpc(damageAmount);
+                otherPlayer.NotifyCollisionDamageClientRpc(damageAmount);
             }
+            
+            // Aplicar efecto visual
+            SpawnCollisionEffectClientRpc(transform.position + (repulsionDirection * 0.5f));
         }
     }
+}
+
+// Añade este nuevo método para notificar al cliente sobre el daño recibido
+[ClientRpc]
+public void NotifyCollisionDamageClientRpc(float damageAmount)
+{
+    if (IsOwner)
+    {
+        // Mostrar al jugador local que ha recibido daño por colisión
+        Debug.Log($"¡Has recibido {damageAmount} de daño por colisión!");
+        
+        // Si tienes un sistema de UI para mostrar daño, podrías usarlo aquí
+        // Por ejemplo:
+        // damageIndicatorUI.ShowDamage(damageAmount, Color.red);
+    }
+}
     
     [ServerRpc]
     public void SetStunStatusServerRpc(bool status)
