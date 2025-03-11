@@ -1,6 +1,7 @@
 using Unity.Netcode;
 using UnityEngine;
 using System.Collections;
+using System.Collections.Generic;
 
 public class PlayerCombat : NetworkBehaviour
 {
@@ -14,6 +15,7 @@ public class PlayerCombat : NetworkBehaviour
     [SerializeField] private bool isRangedAttacker = true;  // True para personajes a distancia, false para cuerpo a cuerpo
     [SerializeField] private GameObject projectilePrefab;   // Prefab del proyectil para ataques a distancia
     [SerializeField] private Transform projectileSpawnPoint; // Punto de origen del proyectil (opcional)
+    [SerializeField] private bool showCooldownDebug = true; // Para depuración
 
     [Header("Efectos Visuales")]
     [SerializeField] private GameObject attackEffectPrefab;
@@ -141,41 +143,195 @@ public class PlayerCombat : NetworkBehaviour
         }
     }
 
-    // Método de prueba para spawneo de proyectil
+    // MÉTODO ACTUALIZADO para la prueba de proyectil con tecla T
     [ServerRpc]
     public void TestSpawnProjectileServerRpc()
     {
-        Debug.Log("🧪 Test spawner de proyectil iniciado");
+        Debug.Log($"[TEST] ServerRpc en servidor - ClientID: {OwnerClientId}, IsHost: {IsHost}, IsServer: {IsServer}");
         
-        if (projectilePrefab == null)
+        if (!IsServer) return;
+        
+        // Si estamos en cooldown, rechazar el ataque
+        if (Time.time < nextAttackTime.Value)
         {
-            Debug.LogError("❌ TEST: ¡Prefab es null!");
+            float remainingTime = nextAttackTime.Value - Time.time;
+            NotifyInCooldownClientRpc(remainingTime);
             return;
         }
         
-        // Spawner proyectil directamente frente al jugador
-        Vector3 spawnPos = transform.position + transform.forward * 2f + Vector3.up;
+        // Configuración básica del disparo
+        Vector3 spawnPos = transform.position + transform.forward * 1.2f + Vector3.up * 1.2f;
         Vector3 direction = transform.forward;
         
-        CombatProjectile.SpawnProjectile(
-            projectilePrefab,
-            spawnPos,
-            direction,
-            attackDamage,
-            OwnerClientId,
-            null
-        );
+        // PASO 1: Encontrar jugador más cercano que esté delante de nosotros
+        NetworkObject target = FindTargetInFront(30f);
         
-        Debug.Log("🧪 Test de spawner completado");
+        // PASO 2: Actualizar cooldown y estado de ataque
+        isAttacking.Value = true;
+        nextAttackTime.Value = Time.time + attackCooldown;
+        
+        // PASO 3: Procesar según si tenemos objetivo o no
+        if (target != null)
+        {
+            // Tenemos un objetivo, dirigir hacia él
+            direction = (target.transform.position - spawnPos).normalized;
+            currentTargetId.Value = target.OwnerClientId;
+            
+            Debug.Log($"[TEST] Objetivo encontrado: {target.name}, ID: {target.OwnerClientId}");
+            
+            // Crear proyectil dirigido al objetivo
+            CombatProjectile projectile = CombatProjectile.SpawnProjectile(
+                projectilePrefab,
+                spawnPos,
+                direction,
+                attackDamage,
+                OwnerClientId,
+                target  // Con objetivo específico
+            );
+            
+            // Notificar al cliente
+            NotifyTestTargetFoundClientRpc(target.OwnerClientId);
+        }
+        else
+        {
+            // Sin objetivo, disparo simple al frente
+            Debug.Log("[TEST] Sin objetivo, disparo simple al frente");
+            
+            // Crear proyectil sin objetivo específico
+            CombatProjectile projectile = CombatProjectile.SpawnProjectile(
+                projectilePrefab,
+                spawnPos,
+                direction,
+                attackDamage,
+                OwnerClientId,
+                null  // Sin objetivo
+            );
+            
+            // Notificar al cliente
+            NotifyNoTargetFoundClientRpc();
+        }
+        
+        // Mostrar efectos visuales en todos los casos
+        SpawnAttackEffectClientRpc(spawnPos, direction);
+    }
+
+    // Método auxiliar para encontrar un objetivo en frente del jugador
+    private NetworkObject FindTargetInFront(float maxDistance)
+    {
+        // Variables para el objetivo más cercano
+        NetworkObject bestTarget = null;
+        float closestAngleDistance = float.MaxValue;
+        
+        // Colección de jugadores para debug
+        List<string> debugPlayers = new List<string>();
+        
+        // Buscar entre todos los jugadores conectados
+        foreach (var clientPair in NetworkManager.Singleton.ConnectedClients)
+        {
+            // Ignorar nuestro propio jugador
+            if (clientPair.Key == OwnerClientId)
+                continue;
+            
+            NetworkObject otherPlayer = clientPair.Value.PlayerObject;
+            if (otherPlayer == null) continue;
+            
+            // Verificar componentes necesarios
+            PlayerStats stats = otherPlayer.GetComponent<PlayerStats>();
+            if (stats == null) continue;
+            
+            debugPlayers.Add($"Player {clientPair.Key}");
+            
+            // Calcular vectores y distancias
+            Vector3 targetPos = otherPlayer.transform.position;
+            Vector3 toTarget = targetPos - transform.position;
+            float distance = toTarget.magnitude;
+            
+            // Solo considerar jugadores en rango
+            if (distance > maxDistance) continue;
+            
+            // Calcular ángulo con respecto a dónde estamos mirando
+            float angle = Vector3.Angle(transform.forward, toTarget.normalized);
+            
+            // Combinar distancia y ángulo para puntuar (favoreciendo jugadores al frente)
+            float combinedScore = angle + (distance * 0.1f);
+            
+            // Actualizar mejor objetivo si mejora la puntuación
+            if (combinedScore < closestAngleDistance)
+            {
+                closestAngleDistance = combinedScore;
+                bestTarget = otherPlayer;
+            }
+        }
+        
+        // Log detallado
+        Debug.Log($"[TEST] Búsqueda de objetivos: encontrados {debugPlayers.Count} jugadores, " +
+                  $"mejor objetivo: {(bestTarget != null ? bestTarget.name : "ninguno")}");
+        
+        return bestTarget;
+    }
+
+    // Nuevo método ClientRpc para notificar sobre cooldown
+    [ClientRpc]
+    private void NotifyInCooldownClientRpc(float remainingTime)
+    {
+        if (!IsOwner) return;
+        
+        Debug.Log($"[TEST] No se puede atacar: en cooldown. Tiempo restante: {remainingTime:F1}s");
+    }
+
+    // Nuevo método ClientRpc para notificar sobre objetivo encontrado
+    [ClientRpc]
+    private void NotifyTestTargetFoundClientRpc(ulong targetId)
+    {
+        if (!IsOwner) return;
+        
+        Debug.Log($"[TEST] Ataque automático dirigido al jugador {targetId}");
+    }
+
+    // Nuevo método ClientRpc para notificar que no se encontró objetivo
+    [ClientRpc]
+    private void NotifyNoTargetFoundClientRpc()
+    {
+        if (!IsOwner) return;
+        
+        Debug.Log("[TEST] No se encontró ningún objetivo cercano, disparando al frente");
+    }
+
+    // Método para verificar si estamos listos para atacar (cooldown)
+    public bool IsAttackReady()
+    {
+        // Si estamos en cooldown
+        if (Time.time < nextAttackTime.Value)
+        {
+            float remainingCooldown = nextAttackTime.Value - Time.time;
+            
+            // Mostrar tiempo restante (solo para depuración)
+            if (showCooldownDebug && IsOwner && remainingCooldown > 0.1f)
+            {
+                Debug.Log($"[Combat] Ataque en cooldown: {remainingCooldown:F1} segundos restantes");
+            }
+            
+            return false;
+        }
+        
+        return true;
     }
 
     public bool ProcessClickOnEnemy(NetworkObject enemyObject)
     {
-        Debug.Log("⚔️ ProcessClickOnEnemy llamado");
+        Debug.Log($"[Combat] ProcessClickOnEnemy llamado - IsOwner: {IsOwner}");
         
         if (!IsLocalPlayer || enemyObject == null) {
             Debug.Log("❌ No somos el jugador local o el enemigo es null");
             return false;
+        }
+
+        // NUEVO: Verificación explícita de cooldown
+        if (!IsAttackReady())
+        {
+            // Ya en cooldown, mostrar mensaje más claro
+            Debug.Log($"[Combat] No se puede atacar: en cooldown");
+            return true; // Retornamos true porque sí procesamos el clic, aunque no atacamos
         }
 
         // Verificar si podemos atacar al enemigo
@@ -223,7 +379,7 @@ public class PlayerCombat : NetworkBehaviour
         }
 
         // Verificar si estamos en cooldown
-        if (Time.time < nextAttackTime.Value) {
+        if (!IsAttackReady()) {
             Debug.Log($"⚔️ Ataque en cooldown, disponible en {nextAttackTime.Value - Time.time} segundos");
             return false;
         }
@@ -296,8 +452,10 @@ public class PlayerCombat : NetworkBehaviour
         Debug.Log($"🚀 SERVER: AttackTargetServerRpc llamado, objetivo: {targetId}");
         
         // Verificar cooldown en el servidor
-        if (Time.time < nextAttackTime.Value) {
-            Debug.Log("⏱️ SERVER: En cooldown, no podemos atacar aún");
+        if (Time.time < nextAttackTime.Value) 
+        {
+            float remaining = nextAttackTime.Value - Time.time;
+            Debug.Log($"⏱️ SERVER: En cooldown, esperando {remaining:F1} segundos más");
             return;
         }
 
@@ -344,34 +502,47 @@ public class PlayerCombat : NetworkBehaviour
             SpawnHitEffectClientRpc(targetObj.transform.position);
         }
 
+        // Notificar al cliente sobre el cooldown para UI
+        NotifyCooldownClientRpc(attackCooldown);
+        
         // Programar fin del ataque
         StartCoroutine(ResetAttackState(0.5f));
     }
     
     // Método para lanzar proyectiles
     private void LaunchProjectile(NetworkObject target)
-{
-    // Calcular posición de origen en el centro del jugador
-    Vector3 spawnPosition = transform.position + Vector3.up * 1.0f; // Solo añadir un poco de altura
-    
-    // Calcular dirección hacia el objetivo
-    Vector3 direction = (target.transform.position - spawnPosition).normalized;
-    
-    Debug.Log($"🚀 Lanzando proyectil desde {spawnPosition} hacia {target.transform.position}");
-    
-    // Spawner el proyectil
-    var projectile = CombatProjectile.SpawnProjectile(
-        projectilePrefab,
-        spawnPosition,
-        direction,
-        attackDamage,
-        OwnerClientId,
-        null
-    );
-    
-    // Efectos visuales de lanzamiento
-    SpawnAttackEffectClientRpc(spawnPosition, direction);
-}
+    {
+        // Determinar posición inicial del proyectil
+        Vector3 spawnPosition;
+        if (projectileSpawnPoint != null)
+        {
+            // Usar punto específico si está configurado
+            spawnPosition = projectileSpawnPoint.position;
+        }
+        else
+        {
+            // Calcular posición de origen en el centro del jugador
+            spawnPosition = transform.position + Vector3.up * 1.0f; // Solo añadir un poco de altura
+        }
+        
+        // Calcular dirección hacia el objetivo
+        Vector3 direction = (target.transform.position - spawnPosition).normalized;
+        
+        Debug.Log($"🚀 Lanzando proyectil desde {spawnPosition} hacia {target.transform.position}");
+        
+        // Spawner el proyectil
+        var projectile = CombatProjectile.SpawnProjectile(
+            projectilePrefab,
+            spawnPosition,
+            direction,
+            attackDamage,
+            OwnerClientId,
+            target
+        );
+        
+        // Efectos visuales de lanzamiento
+        SpawnAttackEffectClientRpc(spawnPosition, direction);
+    }
 
     [ClientRpc]
     private void SpawnHitEffectClientRpc(Vector3 position)
@@ -406,6 +577,17 @@ public class PlayerCombat : NetworkBehaviour
         
         // Reproducir sonido de lanzamiento si está implementado
         // PlayAttackSound();
+    }
+
+    // Nuevo método para notificar sobre cooldown a los clientes
+    [ClientRpc]
+    private void NotifyCooldownClientRpc(float duration)
+    {
+        if (!IsOwner) return;
+        
+        Debug.Log($"[Combat] Ataque realizado, próximo disponible en {duration:F1} segundos");
+        
+        // Aquí podrías actualizar alguna UI de cooldown si la tienes
     }
 
     private IEnumerator ResetAttackState(float delay)
@@ -519,5 +701,22 @@ public class PlayerCombat : NetworkBehaviour
         
         // Verificar si tiene los componentes necesarios
         return target.GetComponent<PlayerStats>() != null;
+    }
+    
+    // Opcional: Mostrar UI temporal para cooldown
+    private void OnGUI()
+    {
+        if (IsOwner && showCooldownDebug)
+        {
+            float cooldown = nextAttackTime.Value - Time.time;
+            if (cooldown > 0)
+            {
+                GUI.Label(new Rect(10, 40, 200, 20), $"Ataque disponible en: {cooldown:F1}s");
+            }
+            else
+            {
+                GUI.Label(new Rect(10, 40, 200, 20), "¡Listo para atacar!");
+            }
+        }
     }
 }

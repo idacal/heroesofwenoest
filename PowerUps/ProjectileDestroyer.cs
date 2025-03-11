@@ -1,17 +1,50 @@
 using UnityEngine;
+using Unity.Netcode;
 
-/// <summary>
-/// Script extremadamente simple que destruye su GameObject después de un tiempo específico.
-/// Añade este script al prefab del proyectil para garantizar su destrucción.
-/// </summary>
 public class ProjectileDestroyer : MonoBehaviour
 {
     [SerializeField] private float destroyTime = 3f;
+    private float timeCreated;
+    private bool hasSentRequest = false;
 
-    void Update()
+    private void Start()
     {
-        // En cada frame, programar la destrucción del objeto
-        // Esto garantiza que el objeto se destruirá después del tiempo especificado
-        Destroy(gameObject, destroyTime);
+        timeCreated = Time.time;
+    }
+    
+    private void Update()
+    {
+        // Si ha pasado el tiempo y no hemos enviado la solicitud aún
+        if (!hasSentRequest && Time.time > timeCreated + destroyTime)
+        {
+            hasSentRequest = true;
+            
+            // Verificar si este objeto tiene un CombatProjectile
+            CombatProjectile projectile = GetComponent<CombatProjectile>();
+            if (projectile != null)
+            {
+                // Solicitar destrucción de forma segura
+                projectile.RequestDestroyServerRpc();
+                
+                // Desactivar este componente para no seguir intentando
+                this.enabled = false;
+            }
+            else
+            {
+                // Si no tiene CombatProjectile pero tiene NetworkObject, solo desactivarlo
+                NetworkObject netObj = GetComponent<NetworkObject>();
+                if (netObj != null)
+                {
+                    // Simplemente desactivamos el GameObject sin destruirlo
+                    gameObject.SetActive(false);
+                    this.enabled = false;
+                }
+                else
+                {
+                    // Si no tiene componentes de red, podemos destruirlo directamente
+                    Destroy(gameObject);
+                }
+            }
+        }
     }
 }

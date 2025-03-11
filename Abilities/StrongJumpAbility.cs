@@ -406,8 +406,7 @@ public class StrongJumpAbility : BaseAbility
         // Aplicar el multiplicador a la distancia base
         jumpDistance = baseJumpDistance * speedMultiplier;
         
-        Debug.Log($"[StrongJumpAbility] Dirección de salto: {jumpDirection}, Velocidad: {currentSpeed:F2}, " +
-                  $"Multiplicador: {speedMultiplier:F2}, Distancia: {jumpDistance:F2}");
+        
     }
     
     // Método para verificar si estamos en Dash
@@ -424,7 +423,7 @@ public class StrongJumpAbility : BaseAbility
     [ServerRpc(RequireOwnership = true)]
     private void ActivateServerRpc()
     {
-        Debug.Log($"[StrongJumpAbility] ActivateServerRpc recibido, servidor notificado de activación");
+        
         
         // Configurar la dirección de salto
         SetupJumpDirection();
@@ -432,7 +431,7 @@ public class StrongJumpAbility : BaseAbility
         // El servidor verifica que se cumplen todas las condiciones
         if (CanActivate())
         {
-            Debug.Log($"[StrongJumpAbility] ActivateServerRpc aprobado, notificando a todos los clientes");
+            
             
             // Consumir maná en el servidor
             if (playerStats != null)
@@ -464,7 +463,7 @@ public class StrongJumpAbility : BaseAbility
         // Si somos el host (servidor + cliente local), ignoramos este mensaje porque ya iniciamos el salto
         if (networkOwner.IsServer && networkOwner.IsOwner)
         {
-            Debug.Log("[StrongJumpAbility] Host ignora ClientRpc porque ya inició el salto");
+            
             return;
         }
         
@@ -484,8 +483,7 @@ public class StrongJumpAbility : BaseAbility
     {
         if (isJumping || isFalling) return;
         
-        Debug.Log($"[StrongJumpAbility] StartJump - Iniciando salto. Posición={networkOwner.transform.position}, " +
-                 $"Dirección={jumpDirection}, Distancia={jumpDistance:F2}");
+        
         
         // Guardar posición inicial para cálculos
         jumpStartPosition = networkOwner.transform.position;
@@ -548,7 +546,7 @@ public class StrongJumpAbility : BaseAbility
         // Asegurar que los controladores físicos estén habilitados
         EnablePhysicsControllers();
         
-        Debug.Log($"[StrongJumpAbility] Habilidad reseteada completamente");
+        
     }
     
     public override void UpdateAbility()
@@ -556,8 +554,7 @@ public class StrongJumpAbility : BaseAbility
         // Debug periódico (cada ~5 segundos)
         if (Time.frameCount % 300 == 0)
         {
-            Debug.Log($"[StrongJumpAbility] Estado actual: isJumping={isJumping}, isFalling={isFalling}, " +
-                     $"isImmobilized={isImmobilized}, isReady={isReady}, syncingTransform={syncingTransform}");
+            
         }
         
         // Actualizar velocidad de movimiento cuando sea el propietario
