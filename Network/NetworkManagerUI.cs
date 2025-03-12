@@ -18,6 +18,9 @@ public class NetworkManagerUI : MonoBehaviour
     [SerializeField] private string defaultAddress = "127.0.0.1"; // Default to localhost
     [SerializeField] private ushort defaultPort = 7777; // Default Unity Netcode port
     
+    [Header("Hero Selection Integration")]
+    [SerializeField] private NetworkManagerExtension networkManagerExtension;
+    
     private bool isSubscribedToEvents = false;
     
     private void Awake()
@@ -36,6 +39,16 @@ public class NetworkManagerUI : MonoBehaviour
             {
                 Debug.LogError("[UI] No NetworkManager found in scene!");
                 return;
+            }
+        }
+        
+        // Find the NetworkManagerExtension if not assigned
+        if (networkManagerExtension == null)
+        {
+            networkManagerExtension = networkManager.GetComponent<NetworkManagerExtension>();
+            if (networkManagerExtension == null)
+            {
+                Debug.LogWarning("[UI] NetworkManagerExtension not found, hero selection will not work!");
             }
         }
         
@@ -89,17 +102,18 @@ public class NetworkManagerUI : MonoBehaviour
             // Update transport address if provided
             UpdateTransportAddress();
             
-            // Start host
-            networkManager.StartHost();
-            
-            // Hide connection UI
-            HideConnectionUI();
-            
-            // Subscribe to events if needed
-            if (!isSubscribedToEvents)
+            if (networkManagerExtension != null)
             {
-                TrySubscribeToEvents();
+                // Use the extension to start host with hero selection
+                networkManagerExtension.StartHostWithHeroSelection();
             }
+            else
+            {
+                // Fallback to direct start
+                networkManager.StartHost();
+            }
+            
+            // El panel de conexión será ocultado por el sistema de selección de héroe
         });
         
         // Client Button
@@ -109,20 +123,21 @@ public class NetworkManagerUI : MonoBehaviour
             // Update transport address if provided
             UpdateTransportAddress();
             
-            // Start client
-            networkManager.StartClient();
-            
-            // Hide connection UI
-            HideConnectionUI();
-            
-            // Subscribe to events if needed
-            if (!isSubscribedToEvents)
+            if (networkManagerExtension != null)
             {
-                TrySubscribeToEvents();
+                // Use the extension to start client with hero selection
+                networkManagerExtension.StartClientWithHeroSelection();
             }
+            else
+            {
+                // Fallback to direct start
+                networkManager.StartClient();
+            }
+            
+            // El panel de conexión será ocultado por el sistema de selección de héroe
         });
         
-        // Server Button
+        // Server Button (sin cambios ya que nos enfocamos en host/client)
         serverButton.onClick.AddListener(() => {
             Debug.Log("[UI] Starting Server");
             
@@ -131,12 +146,6 @@ public class NetworkManagerUI : MonoBehaviour
             
             // Hide connection UI
             HideConnectionUI();
-            
-            // Subscribe to events if needed
-            if (!isSubscribedToEvents)
-            {
-                TrySubscribeToEvents();
-            }
         });
     }
     

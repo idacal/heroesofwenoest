@@ -489,4 +489,97 @@ public class PlayerStats : NetworkBehaviour
             Debug.Log("<color=red><size=20>¡HAS MUERTO!</size></color>");
         }
     }
+    
+    // NUEVOS MÉTODOS PARA CONFIGURACIÓN DE HÉROES
+    
+    // Método para establecer la salud máxima (llamado durante la inicialización del héroe)
+    public void SetMaxHealth(float value)
+    {
+        if (!IsServer) 
+        {
+            SetMaxHealthServerRpc(value);
+            return;
+        }
+        
+        maxHealth = value;
+        
+        // Si la salud actual es mayor que el nuevo máximo, ajustarla
+        if (networkHealth.Value > maxHealth)
+        {
+            networkHealth.Value = maxHealth;
+        }
+        
+        // Notificar a los clientes sobre el cambio
+        OnHealthChanged?.Invoke(networkHealth.Value, maxHealth);
+    }
+
+    // Método para establecer el maná máximo (llamado durante la inicialización del héroe)
+    public void SetMaxMana(float value)
+    {
+        if (!IsServer) 
+        {
+            SetMaxManaServerRpc(value);
+            return;
+        }
+        
+        maxMana = value;
+        
+        // Si el maná actual es mayor que el nuevo máximo, ajustarlo
+        if (networkMana.Value > maxMana)
+        {
+            networkMana.Value = maxMana;
+        }
+        
+        // Notificar a los clientes sobre el cambio
+        OnManaChanged?.Invoke(networkMana.Value, maxMana);
+    }
+
+    // Método para establecer la tasa de regeneración de salud
+    public void SetHealthRegen(float value)
+    {
+        if (!IsServer) 
+        {
+            SetHealthRegenServerRpc(value);
+            return;
+        }
+        
+        healthRegen = value;
+    }
+
+    // Método para establecer la tasa de regeneración de maná
+    public void SetManaRegen(float value)
+    {
+        if (!IsServer) 
+        {
+            SetManaRegenServerRpc(value);
+            return;
+        }
+        
+        manaRegen = value;
+    }
+
+    // ServerRPCs para los métodos anteriores
+    [ServerRpc]
+    public void SetMaxHealthServerRpc(float value)
+    {
+        SetMaxHealth(value);
+    }
+
+    [ServerRpc]
+    public void SetMaxManaServerRpc(float value)
+    {
+        SetMaxMana(value);
+    }
+
+    [ServerRpc]
+    public void SetHealthRegenServerRpc(float value)
+    {
+        SetHealthRegen(value);
+    }
+
+    [ServerRpc]
+    public void SetManaRegenServerRpc(float value)
+    {
+        SetManaRegen(value);
+    }
 }
