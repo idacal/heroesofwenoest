@@ -36,17 +36,23 @@ public class HeroSelectionUI : MonoBehaviour
     
     private void Awake()
     {
+        Debug.Log("[HeroSelectionUI] Awake called");
+        
         heroSelectionManager = FindObjectOfType<HeroSelectionManager>();
         
         if (heroSelectionManager == null)
         {
-            Debug.LogError("HeroSelectionManager not found in the scene!");
+            Debug.LogError("[HeroSelectionUI] HeroSelectionManager not found in the scene!");
         }
         
         // Initially hide the hero selection panel
         if (heroSelectionPanel != null)
         {
             heroSelectionPanel.SetActive(false);
+        }
+        else
+        {
+            Debug.LogError("[HeroSelectionUI] heroSelectionPanel is null!");
         }
         
         // Set up hero button listeners
@@ -57,6 +63,11 @@ public class HeroSelectionUI : MonoBehaviour
         {
             readyButton.onClick.AddListener(OnReadyButtonClicked);
             readyButton.interactable = false; // Disable until a hero is selected
+            Debug.Log("[HeroSelectionUI] Ready button listener set up");
+        }
+        else
+        {
+            Debug.LogError("[HeroSelectionUI] readyButton is null!");
         }
     }
     
@@ -82,21 +93,41 @@ public class HeroSelectionUI : MonoBehaviour
     
     private void SetupHeroButtons()
     {
+        Debug.Log("[HeroSelectionUI] Setting up hero buttons. Count: " + (heroButtons != null ? heroButtons.Length : 0));
+        
         // Set up click handlers for each hero button
+        if (heroButtons == null)
+        {
+            Debug.LogError("[HeroSelectionUI] heroButtons array is null!");
+            return;
+        }
+        
         for (int i = 0; i < heroButtons.Length; i++)
         {
             if (heroButtons[i] != null)
             {
                 int heroIndex = i; // Need to capture the index for the lambda
-                heroButtons[i].onClick.AddListener(() => OnHeroButtonClicked(heroIndex));
-                Debug.Log($"Hero button {i} listener set up");
+                
+                // Remove any existing listeners to prevent duplicates
+                heroButtons[i].onClick.RemoveAllListeners();
+                
+                heroButtons[i].onClick.AddListener(() => {
+                    Debug.Log($"[HeroSelectionUI] Hero button {heroIndex} clicked!");
+                    OnHeroButtonClicked(heroIndex);
+                });
+                
+                Debug.Log($"[HeroSelectionUI] Hero button {i} listener set up");
+            }
+            else
+            {
+                Debug.LogError($"[HeroSelectionUI] Hero button at index {i} is null!");
             }
         }
     }
     
     public void OnHeroButtonClicked(int heroIndex)
     {
-        Debug.Log($"Hero button clicked: {heroIndex}");
+        Debug.Log($"[HeroSelectionUI] OnHeroButtonClicked: {heroIndex}");
         
         // Update the local selection
         selectedHeroIndex = heroIndex;
@@ -120,7 +151,7 @@ public class HeroSelectionUI : MonoBehaviour
         }
         else
         {
-            Debug.LogError("heroSelectionManager is null! Cannot select hero.");
+            Debug.LogError("[HeroSelectionUI] heroSelectionManager is null! Cannot select hero.");
             // Try to find it again
             heroSelectionManager = FindObjectOfType<HeroSelectionManager>();
             if (heroSelectionManager != null)
@@ -154,7 +185,7 @@ public class HeroSelectionUI : MonoBehaviour
             }
             else
             {
-                Debug.LogError("heroSelectionManager is null! Cannot confirm selection.");
+                Debug.LogError("[HeroSelectionUI] heroSelectionManager is null! Cannot confirm selection.");
                 // Try to find it again
                 heroSelectionManager = FindObjectOfType<HeroSelectionManager>();
                 if (heroSelectionManager != null)
@@ -193,6 +224,8 @@ public class HeroSelectionUI : MonoBehaviour
     
     private void DisplayHeroInfo(int heroIndex)
     {
+        Debug.Log($"[HeroSelectionUI] DisplayHeroInfo for hero index: {heroIndex}");
+        
         if (heroInfoPanel != null && heroSelectionManager != null)
         {
             // Get hero data
@@ -204,12 +237,13 @@ public class HeroSelectionUI : MonoBehaviour
                 heroInfoPanel.SetActive(true);
                 
                 // Set hero details
-                heroNameText.text = heroData.heroName;
-                heroDescriptionText.text = heroData.description;
+                if (heroNameText != null) heroNameText.text = heroData.heroName;
+                if (heroDescriptionText != null) heroDescriptionText.text = heroData.description;
                 
                 if (heroPortrait != null)
                 {
                     heroPortrait.sprite = heroData.portrait;
+                    Debug.Log($"[HeroSelectionUI] Set portrait: {(heroData.portrait != null ? heroData.portrait.name : "null")}");
                 }
                 
                 // Update ability info
@@ -231,17 +265,39 @@ public class HeroSelectionUI : MonoBehaviour
                     }
                 }
             }
+            else
+            {
+                Debug.LogError($"[HeroSelectionUI] HeroData is null for index: {heroIndex}");
+            }
+        }
+        else
+        {
+            if (heroInfoPanel == null) Debug.LogError("[HeroSelectionUI] heroInfoPanel is null!");
+            if (heroSelectionManager == null) Debug.LogError("[HeroSelectionUI] heroSelectionManager is null!");
         }
     }
     
     // Called by HeroSelectionManager to show this UI when needed
     public void Show()
     {
-        Debug.Log("HeroSelectionUI.Show() called");
+        Debug.Log("[HeroSelectionUI] Show() called");
         
         if (heroSelectionPanel != null)
         {
             heroSelectionPanel.SetActive(true);
+        }
+        else
+        {
+            Debug.LogError("[HeroSelectionUI] heroSelectionPanel is null!");
+            return;
+        }
+        
+        // Try to find HeroSelectionManager again if it's null
+        if (heroSelectionManager == null)
+        {
+            heroSelectionManager = FindObjectOfType<HeroSelectionManager>();
+            Debug.Log("[HeroSelectionUI] Attempting to find HeroSelectionManager again: " + 
+                     (heroSelectionManager != null ? "Success" : "Failed"));
         }
         
         // Reset state
@@ -263,10 +319,16 @@ public class HeroSelectionUI : MonoBehaviour
             {
                 heroButtons[i].interactable = true;
             }
+            else
+            {
+                Debug.LogError($"[HeroSelectionUI] Hero button at index {i} is null!");
+            }
         }
         
         // Clear selected state
         UpdateHeroSelectionUI(-1);
+        
+        Debug.Log("[HeroSelectionUI] UI initialized and shown");
     }
     
     public void Hide()

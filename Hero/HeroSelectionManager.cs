@@ -5,7 +5,7 @@ using System;
 
 public class HeroSelectionManager : NetworkBehaviour
 {
-    [Header("References")]
+    [Header("UI References")]
     [SerializeField] private HeroSelectionUI heroSelectionUI;
     [SerializeField] private MOBAGameManager gameManager;
     [SerializeField] private GameObject connectionPanel; // Reference to hide connection UI during selection
@@ -41,12 +41,14 @@ public class HeroSelectionManager : NetworkBehaviour
         
         if (IsServer)
         {
+            Debug.Log("[HeroSelectionManager] Initializing selection phase as server");
             // Server initializes the selection phase
             InitializeSelectionPhase();
         }
         
         if (IsClient)
         {
+            Debug.Log("[HeroSelectionManager] Client connected to selection phase");
             // Hide connection panel and show hero selection
             if (connectionPanel != null)
             {
@@ -56,6 +58,16 @@ public class HeroSelectionManager : NetworkBehaviour
             if (heroSelectionUI != null)
             {
                 heroSelectionUI.Show();
+            }
+            else
+            {
+                Debug.LogError("[HeroSelectionManager] heroSelectionUI is null!");
+                // Try to find it
+                heroSelectionUI = FindObjectOfType<HeroSelectionUI>();
+                if (heroSelectionUI != null)
+                {
+                    heroSelectionUI.Show();
+                }
             }
             
             // Reset local state
@@ -118,6 +130,7 @@ public class HeroSelectionManager : NetworkBehaviour
     {
         if (IsServer)
         {
+            Debug.Log("[HeroSelectionManager] Time's up! Forcing player confirmations");
             // For each player that hasn't made a selection, assign a random hero
             // And for each player that hasn't confirmed, force confirm
             for (int i = 0; i < playerSelections.Count; i++)
@@ -128,6 +141,7 @@ public class HeroSelectionManager : NetworkBehaviour
                 if (selection.selectedHeroIndex < 0)
                 {
                     selection.selectedHeroIndex = UnityEngine.Random.Range(0, availableHeroes.Length);
+                    Debug.Log($"[HeroSelectionManager] Assigned random hero {selection.selectedHeroIndex} to player {selection.clientId}");
                 }
                 
                 // Force ready
@@ -147,13 +161,19 @@ public class HeroSelectionManager : NetworkBehaviour
     {
         if (!IsClient) return;
         
+        if (heroIndex < 0 || heroIndex >= availableHeroes.Length)
+        {
+            Debug.LogError($"[HeroSelectionManager] Invalid hero index: {heroIndex}");
+            return;
+        }
+        
         // Save local selection
         localSelectedHeroIndex = heroIndex;
         
         // Send selection to server
         UpdateHeroSelectionServerRpc(heroIndex);
         
-        Debug.Log($"Selected hero: {availableHeroes[heroIndex].heroName}");
+        Debug.Log($"[HeroSelectionManager] Selected hero: {availableHeroes[heroIndex].heroName}");
     }
     
     // Called by UI when player confirms their selection
@@ -161,13 +181,13 @@ public class HeroSelectionManager : NetworkBehaviour
     {
         if (!IsClient || localSelectedHeroIndex < 0) return;
         
+        Debug.Log($"[HeroSelectionManager] Confirming hero selection: {availableHeroes[localSelectedHeroIndex].heroName}");
+        
         // Update local state
         localPlayerReady = true;
         
         // Send confirmation to server
         ConfirmHeroSelectionServerRpc();
-        
-        Debug.Log($"Confirmed hero selection: {availableHeroes[localSelectedHeroIndex].heroName}");
     }
     
     [ServerRpc(RequireOwnership = false)]
@@ -199,6 +219,7 @@ public class HeroSelectionManager : NetworkBehaviour
                 PlayerHeroSelection selection = playerSelections[i];
                 selection.selectedHeroIndex = heroIndex;
                 playerSelections[i] = selection;
+                Debug.Log($"[HeroSelectionManager] Player {clientId} selected hero: {availableHeroes[heroIndex].heroName}");
                 break;
             }
         }
@@ -208,6 +229,7 @@ public class HeroSelectionManager : NetworkBehaviour
     private void ConfirmHeroSelectionServerRpc(ServerRpcParams rpcParams = default)
     {
         ulong clientId = rpcParams.Receive.SenderClientId;
+        Debug.Log($"[HeroSelectionManager] Server received confirmation from client {clientId}");
         
         // Find this player's selection entry
         for (int i = 0; i < playerSelections.Count; i++)
@@ -222,10 +244,14 @@ public class HeroSelectionManager : NetworkBehaviour
                     selection.isReady = true;
                     playerSelections[i] = selection;
                     
-                    Debug.Log($"Player {clientId} confirmed hero: {availableHeroes[selection.selectedHeroIndex].heroName}");
+                    Debug.Log($"[HeroSelectionManager] Client {clientId} confirmed hero: {availableHeroes[selection.selectedHeroIndex].heroName}");
                     
                     // Check if all players are ready
                     CheckAllPlayersReady();
+                }
+                else
+                {
+                    Debug.LogWarning($"[HeroSelectionManager] Client {clientId} tried to confirm without selecting a hero");
                 }
                 break;
             }
@@ -250,6 +276,8 @@ public class HeroSelectionManager : NetworkBehaviour
         if (!IsServer) return;
         
         bool allReady = true;
+        int readyCount = 0;
+        int totalPlayers = playerSelections.Count;
         
         // Check if all players have made a selection and are ready
         foreach (var selection in playerSelections)
@@ -257,13 +285,18 @@ public class HeroSelectionManager : NetworkBehaviour
             if (!selection.isReady || selection.selectedHeroIndex < 0)
             {
                 allReady = false;
-                break;
+            }
+            else
+            {
+                readyCount++;
             }
         }
         
+        Debug.Log($"[HeroSelectionManager] Player readiness: {readyCount}/{totalPlayers} ready");
+        
         if (allReady)
         {
-            Debug.Log("All players are ready! Starting the game...");
+            Debug.Log("[HeroSelectionManager] All players are ready! Starting the game...");
             StartGame();
         }
     }
@@ -271,6 +304,8 @@ public class HeroSelectionManager : NetworkBehaviour
     private void StartGame()
     {
         if (!IsServer) return;
+        
+        Debug.Log("[HeroSelectionManager] Starting game with hero selections");
         
         // Stop the timer if it's running
         if (selectionTimeLimit > 0)
@@ -289,6 +324,7 @@ public class HeroSelectionManager : NetworkBehaviour
             foreach (var selection in playerSelections)
             {
                 playerHeroSelections[selection.clientId] = selection.selectedHeroIndex;
+                Debug.Log($"[HeroSelectionManager] Player {selection.clientId} selected hero index: {selection.selectedHeroIndex}");
             }
             
             // Tell the game manager to spawn players with their selected heroes
@@ -296,7 +332,22 @@ public class HeroSelectionManager : NetworkBehaviour
         }
         else
         {
-            Debug.LogError("Game Manager reference is missing! Cannot start the game.");
+            Debug.LogError("[HeroSelectionManager] Game Manager reference is missing! Cannot start the game.");
+            // Try to find it
+            gameManager = FindObjectOfType<MOBAGameManager>();
+            if (gameManager != null)
+            {
+                Dictionary<ulong, int> playerHeroSelections = new Dictionary<ulong, int>();
+                foreach (var selection in playerSelections)
+                {
+                    playerHeroSelections[selection.clientId] = selection.selectedHeroIndex;
+                }
+                gameManager.StartGameWithHeroSelections(playerHeroSelections);
+            }
+            else
+            {
+                Debug.LogError("[HeroSelectionManager] Still couldn't find Game Manager!");
+            }
         }
     }
     
@@ -354,7 +405,6 @@ public class HeroSelectionManager : NetworkBehaviour
             serializer.SerializeValue(ref isReady);
         }
         
-        // Implementación de IEquatable<T>
         public bool Equals(PlayerHeroSelection other)
         {
             return clientId == other.clientId && 
@@ -362,7 +412,6 @@ public class HeroSelectionManager : NetworkBehaviour
                    isReady == other.isReady;
         }
         
-        // Sobrecargas recomendadas cuando se implementa IEquatable<T>
         public override bool Equals(object obj)
         {
             return obj is PlayerHeroSelection selection && Equals(selection);
@@ -370,7 +419,6 @@ public class HeroSelectionManager : NetworkBehaviour
         
         public override int GetHashCode()
         {
-            // Método alternativo sin usar HashCode.Combine para mayor compatibilidad
             unchecked
             {
                 int hash = 17;

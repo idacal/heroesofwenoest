@@ -86,34 +86,40 @@ public class NetworkManagerExtension : MonoBehaviour
     {
         if (networkManager != null)
         {
-            // Ocultar panel de conexión
+            Debug.Log("[NetworkManagerExtension] StartHostWithHeroSelection called");
+            
+            // Hide connection panel
             if (connectionPanel != null)
             {
                 connectionPanel.SetActive(false);
             }
             
-            // Primero iniciamos el host en modo red pero sin spawneo de jugador
-            networkManager.StartHost();
-            
-            // IMPORTANTE: ahora debemos desactivar la spawneada automática del jugador
+            // IMPORTANT: First find and set hero selection mode BEFORE starting host
             MOBAGameManager gameManager = FindObjectOfType<MOBAGameManager>();
             if (gameManager != null)
             {
-                // Informar al GameManager que estamos en fase de selección
+                Debug.Log("[NetworkManagerExtension] Setting hero selection mode = true");
                 gameManager.SetHeroSelectionMode(true);
-            }
-            
-            // Mostrar la UI de selección de héroes
-            if (heroSelectionUI != null)
-            {
-                heroSelectionUI.gameObject.SetActive(true);
-                heroSelectionUI.Show();
-                
-                Debug.Log("Host iniciado con fase de selección de héroes");
             }
             else
             {
-                Debug.LogError("¡heroSelectionUI no está asignado! No se puede mostrar la UI de selección.");
+                Debug.LogError("[NetworkManagerExtension] No MOBAGameManager found!");
+            }
+            
+            // Start host after setting selection mode
+            Debug.Log("[NetworkManagerExtension] Starting host...");
+            networkManager.StartHost();
+            
+            // Show hero selection UI
+            if (heroSelectionUI != null)
+            {
+                Debug.Log("[NetworkManagerExtension] Showing hero selection UI");
+                heroSelectionUI.gameObject.SetActive(true);
+                heroSelectionUI.Show();
+            }
+            else
+            {
+                Debug.LogError("[NetworkManagerExtension] heroSelectionUI is null!");
             }
         }
     }
@@ -123,7 +129,9 @@ public class NetworkManagerExtension : MonoBehaviour
     {
         if (networkManager != null)
         {
-            // Ocultar panel de conexión
+            Debug.Log("[NetworkManagerExtension] StartClientWithHeroSelection called");
+            
+            // Hide connection panel
             if (connectionPanel != null)
             {
                 connectionPanel.SetActive(false);
@@ -132,7 +140,7 @@ public class NetworkManagerExtension : MonoBehaviour
             // Start client as normal
             networkManager.StartClient();
             
-            Debug.Log("Client started with hero selection phase");
+            Debug.Log("[NetworkManagerExtension] Client started with hero selection phase");
         }
     }
 }
