@@ -89,12 +89,15 @@ public class HeroSelectionUI : MonoBehaviour
             {
                 int heroIndex = i; // Need to capture the index for the lambda
                 heroButtons[i].onClick.AddListener(() => OnHeroButtonClicked(heroIndex));
+                Debug.Log($"Hero button {i} listener set up");
             }
         }
     }
     
-    private void OnHeroButtonClicked(int heroIndex)
+    public void OnHeroButtonClicked(int heroIndex)
     {
+        Debug.Log($"Hero button clicked: {heroIndex}");
+        
         // Update the local selection
         selectedHeroIndex = heroIndex;
         
@@ -111,23 +114,54 @@ public class HeroSelectionUI : MonoBehaviour
         DisplayHeroInfo(heroIndex);
         
         // Tell the selection manager about our choice (but don't confirm yet)
-        heroSelectionManager.SelectHero(heroIndex);
+        if (heroSelectionManager != null)
+        {
+            heroSelectionManager.SelectHero(heroIndex);
+        }
+        else
+        {
+            Debug.LogError("heroSelectionManager is null! Cannot select hero.");
+            // Try to find it again
+            heroSelectionManager = FindObjectOfType<HeroSelectionManager>();
+            if (heroSelectionManager != null)
+            {
+                heroSelectionManager.SelectHero(heroIndex);
+            }
+        }
     }
     
     private void OnReadyButtonClicked()
     {
+        Debug.Log("Ready button clicked with selected hero: " + selectedHeroIndex);
+        
         // Confirm our hero selection
         if (selectedHeroIndex >= 0)
         {
-            // Notify the manager that we're ready with our hero selection
-            heroSelectionManager.ConfirmHeroSelection();
-            
-            // Disable the ready button and hero selection buttons
-            readyButton.interactable = false;
-            DisableHeroButtons();
-            
-            // Update info text
-            selectionInfoText.text = "Waiting for other players...";
+            if (heroSelectionManager != null)
+            {
+                // Notify the manager that we're ready with our hero selection
+                heroSelectionManager.ConfirmHeroSelection();
+                
+                // Disable the ready button and hero selection buttons
+                readyButton.interactable = false;
+                DisableHeroButtons();
+                
+                // Update info text
+                if (selectionInfoText != null)
+                {
+                    selectionInfoText.text = "Waiting for other players...";
+                }
+            }
+            else
+            {
+                Debug.LogError("heroSelectionManager is null! Cannot confirm selection.");
+                // Try to find it again
+                heroSelectionManager = FindObjectOfType<HeroSelectionManager>();
+                if (heroSelectionManager != null)
+                {
+                    heroSelectionManager.ConfirmHeroSelection();
+                }
+            }
         }
     }
     
@@ -203,6 +237,8 @@ public class HeroSelectionUI : MonoBehaviour
     // Called by HeroSelectionManager to show this UI when needed
     public void Show()
     {
+        Debug.Log("HeroSelectionUI.Show() called");
+        
         if (heroSelectionPanel != null)
         {
             heroSelectionPanel.SetActive(true);

@@ -55,51 +55,36 @@ public class PlayerUI : MonoBehaviour
         }
     }
     
-    private void FindPlayerStats()
+private void FindPlayerStats()
+{
+    if (playerStats == null)
     {
-        Debug.Log("[PlayerUI] FindPlayerStats method called");
+        PlayerNetwork[] players = FindObjectsOfType<PlayerNetwork>();
         
-        if (playerStats == null)
+        foreach (PlayerNetwork player in players)
         {
-            PlayerNetwork[] players = FindObjectsOfType<PlayerNetwork>();
-            
-            Debug.Log($"[PlayerUI] Found {players.Length} PlayerNetwork objects");
-            
-            foreach (PlayerNetwork player in players)
+            if (player.IsLocalPlayer && player.IsSpawned)
             {
-                Debug.Log($"[PlayerUI] Checking player: {player.gameObject.name}, IsLocalPlayer: {player.IsLocalPlayer}");
+                playerStats = player.GetComponent<PlayerStats>();
                 
-                if (player.IsLocalPlayer)
+                if (playerStats != null)
                 {
-                    playerStats = player.GetComponent<PlayerStats>();
+                    Debug.Log("[PlayerUI] PlayerStats encontrado correctamente");
+                    hasFoundPlayerStats = true;
                     
-                    if (playerStats != null)
-                    {
-                        Debug.Log("[PlayerUI] PlayerStats found successfully");
-                        hasFoundPlayerStats = true;
-                        
-                        // Suscribirse a los eventos de cambio
-                        playerStats.OnHealthChanged += UpdateHealthUI;
-                        playerStats.OnManaChanged += UpdateManaUI;
-                        
-                        // Inicializar los valores de UI
-                        InitializeUI();
-                        
-                        break;
-                    }
-                    else
-                    {
-                        Debug.LogError("[PlayerUI] No PlayerStats component found on local player");
-                    }
+                    // Suscribirse a los eventos
+                    playerStats.OnHealthChanged += UpdateHealthUI;
+                    playerStats.OnManaChanged += UpdateManaUI;
+                    
+                    // Inicializar UI
+                    InitializeUI();
+                    
+                    break;
                 }
-            }
-            
-            if (playerStats == null)
-            {
-                Debug.LogWarning("[PlayerUI] No se pudo encontrar el PlayerStats del jugador local");
             }
         }
     }
+}
     
     private void Update()
     {

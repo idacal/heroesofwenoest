@@ -4,8 +4,7 @@ using UnityEngine;
 public class NetworkManagerExtension : MonoBehaviour
 {
     [Header("Hero Selection")]
-    [SerializeField] private HeroSelectionManager heroSelectionManager;
-    [SerializeField] private GameObject heroSelectionUI;
+    [SerializeField] private HeroSelectionUI heroSelectionUI;
     [SerializeField] private GameObject connectionPanel; // Original connection UI
     
     private NetworkManager networkManager;
@@ -31,7 +30,7 @@ public class NetworkManagerExtension : MonoBehaviour
         // Initially hide the hero selection UI
         if (heroSelectionUI != null)
         {
-            heroSelectionUI.SetActive(false);
+            heroSelectionUI.gameObject.SetActive(false);
         }
     }
     
@@ -50,7 +49,7 @@ public class NetworkManagerExtension : MonoBehaviour
         Debug.Log("Server started - preparing hero selection phase");
         
         // Initialize the hero selection system if we're the host
-        if (networkManager.IsHost && heroSelectionManager != null)
+        if (networkManager.IsHost && heroSelectionUI != null)
         {
             // The hero selection manager will handle showing the UI
             // when it spawns in the network
@@ -82,17 +81,40 @@ public class NetworkManagerExtension : MonoBehaviour
         }
     }
     
-    // Modify the NetworkManagerUI to call these methods instead of directly starting host/client
-    
     // Call this from your UI instead of directly calling NetworkManager.StartHost()
     public void StartHostWithHeroSelection()
     {
         if (networkManager != null)
         {
-            // Start host as normal
+            // Ocultar panel de conexión
+            if (connectionPanel != null)
+            {
+                connectionPanel.SetActive(false);
+            }
+            
+            // Primero iniciamos el host en modo red pero sin spawneo de jugador
             networkManager.StartHost();
             
-            Debug.Log("Host started with hero selection phase");
+            // IMPORTANTE: ahora debemos desactivar la spawneada automática del jugador
+            MOBAGameManager gameManager = FindObjectOfType<MOBAGameManager>();
+            if (gameManager != null)
+            {
+                // Informar al GameManager que estamos en fase de selección
+                gameManager.SetHeroSelectionMode(true);
+            }
+            
+            // Mostrar la UI de selección de héroes
+            if (heroSelectionUI != null)
+            {
+                heroSelectionUI.gameObject.SetActive(true);
+                heroSelectionUI.Show();
+                
+                Debug.Log("Host iniciado con fase de selección de héroes");
+            }
+            else
+            {
+                Debug.LogError("¡heroSelectionUI no está asignado! No se puede mostrar la UI de selección.");
+            }
         }
     }
     
@@ -101,6 +123,12 @@ public class NetworkManagerExtension : MonoBehaviour
     {
         if (networkManager != null)
         {
+            // Ocultar panel de conexión
+            if (connectionPanel != null)
+            {
+                connectionPanel.SetActive(false);
+            }
+            
             // Start client as normal
             networkManager.StartClient();
             

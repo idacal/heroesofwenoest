@@ -165,6 +165,8 @@ public class PlayerRespawnController : NetworkBehaviour
         if (IsServer)
         {
             isDeathRespawn = true; // Marcar como respawn por muerte
+            
+            // IMPORTANTE: NO crear un jugador nuevo, simplemente utilizar el proceso de respawn
             StartRespawnProcess();
         }
         else

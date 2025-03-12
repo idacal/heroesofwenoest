@@ -18,11 +18,21 @@ public class MOBAGameManager : NetworkBehaviour
     [Header("Hero System")]
     [SerializeField] private HeroData[] availableHeroes;
     
+    // Nueva variable para controlar si estamos en fase de selección de héroes
+    private bool inHeroSelectionMode = false;
+
     // Dictionary to track players and their teams
     private Dictionary<ulong, int> playerTeams = new Dictionary<ulong, int>();
     // Dictionary to track which hero each player selected
     private Dictionary<ulong, int> playerHeroSelections = new Dictionary<ulong, int>();
     private int playerSpawnCount = 0;
+    
+    // Método para establecer el modo de selección de héroes
+    public void SetHeroSelectionMode(bool inSelection)
+    {
+        inHeroSelectionMode = inSelection;
+        Debug.Log($"MOBAGameManager: Modo selección de héroes = {inSelection}");
+    }
     
     public override void OnNetworkSpawn()
     {
@@ -30,16 +40,27 @@ public class MOBAGameManager : NetworkBehaviour
         {
             Debug.Log("[MANAGER] MOBAGameManager initialized as server");
             
-            // Only the server handles player connections
-            NetworkManager.Singleton.OnClientConnectedCallback += OnPlayerConnected;
-            NetworkManager.Singleton.OnClientDisconnectCallback += OnPlayerDisconnected;
-            
-            // If we're also a client (host mode), spawn our own player
-            if (IsClient)
+            // Solo inicializar jugadores si NO estamos en modo selección
+            if (!inHeroSelectionMode)
             {
-                ulong localClientId = NetworkManager.Singleton.LocalClientId;
-                Debug.Log($"[MANAGER] Host mode detected, spawning host player with ID: {localClientId}");
-                SpawnPlayer(localClientId);
+                // Only the server handles player connections
+                NetworkManager.Singleton.OnClientConnectedCallback += OnPlayerConnected;
+                NetworkManager.Singleton.OnClientDisconnectCallback += OnPlayerDisconnected;
+                
+                // If we're also a client (host mode), spawn our own player
+                if (IsClient)
+                {
+                    ulong localClientId = NetworkManager.Singleton.LocalClientId;
+                    Debug.Log($"[MANAGER] Host mode detected, spawning host player with ID: {localClientId}");
+                    SpawnPlayer(localClientId);
+                }
+            }
+            else
+            {
+                Debug.Log("MOBAGameManager en modo selección de héroes - no spawneando jugadores automáticamente");
+                
+                // Solo registramos el evento de desconexión para limpieza
+                NetworkManager.Singleton.OnClientDisconnectCallback += OnPlayerDisconnected;
             }
         }
     }
@@ -143,8 +164,14 @@ public class MOBAGameManager : NetworkBehaviour
         
         Debug.Log("[MANAGER] Starting game with hero selections");
         
+        // Actualizar modo de selección
+        inHeroSelectionMode = false;
+        
         // Store the hero selections
         playerHeroSelections = heroSelections;
+        
+        // Register for player connection events now that selection is complete
+        NetworkManager.Singleton.OnClientConnectedCallback += OnPlayerConnected;
         
         // Spawn players with their selected heroes
         foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
