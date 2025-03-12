@@ -246,7 +246,23 @@ public class PlayerNetwork : NetworkBehaviour
         
         dashAbility = GetComponent<DashAbility>();
         strongJumpAbility = GetComponent<StrongJumpAbility>();
+            if (playerCombat == null)
+    {
+        playerCombat = GetComponent<PlayerCombat>();
         
+        if (playerCombat != null)
+        {
+            Debug.Log($"[PLAYER_{playerUniqueId}] Encontrada referencia a PlayerCombat");
+        }
+        else
+        {
+            Debug.LogWarning($"[PLAYER_{playerUniqueId}] No se encontró PlayerCombat, reintentando...");
+            
+            // Intentar una vez más
+            yield return new WaitForSeconds(0.5f);
+            playerCombat = GetComponent<PlayerCombat>();
+        }
+    }
         if (strongJumpAbility != null)
         {
             Debug.Log($"[PLAYER_{playerUniqueId}] Encontrada referencia a StrongJumpAbility");
@@ -528,48 +544,62 @@ public class PlayerNetwork : NetworkBehaviour
     }
     
     // Nuevo método para manejar ataques con el botón izquierdo del mouse
-    private void HandleMouseAttack()
+// Modify the HandleMouseAttack() method in PlayerNetwork.cs
+private void HandleMouseAttack()
+{
+    // Si estamos aturdidos o en pausa de habilidad, no procesar entrada
+    if (!canMove || IsInAbilityPause() || IsPositionControlledByAbility()) 
     {
-        // Si estamos aturdidos o en pausa de habilidad, no procesar entrada
-        if (!canMove || IsInAbilityPause() || IsPositionControlledByAbility()) 
+        return;
+    }
+    
+    // NUEVO: Comprobar primero si playerCombat está disponible
+    if (playerCombat == null)
+    {
+        // Intentar obtener la referencia si falta
+        playerCombat = GetComponent<PlayerCombat>();
+        
+        // Si sigue sin estar disponible, salir del método
+        if (playerCombat == null)
         {
             return;
         }
+    }
+    
+    // Click izquierdo para atacar
+    if (Input.GetMouseButtonDown(0))
+    {
+        Ray ray = playerCamera != null ? playerCamera.ScreenPointToRay(Input.mousePosition) : Camera.main.ScreenPointToRay(Input.mousePosition);
+        RaycastHit hit;
         
-        // Click izquierdo para atacar
-        if (Input.GetMouseButtonDown(0))
+        // Verificar si hacemos clic en un jugador enemigo
+        if (Physics.Raycast(ray, out hit))
         {
-            Ray ray = playerCamera != null ? playerCamera.ScreenPointToRay(Input.mousePosition) : Camera.main.ScreenPointToRay(Input.mousePosition);
-            RaycastHit hit;
+            // Verificar si el objeto golpeado es un jugador enemigo
+            NetworkObject hitNetObj = hit.collider.GetComponent<NetworkObject>();
             
-            // Verificar si hacemos clic en un jugador enemigo
-            if (Physics.Raycast(ray, out hit))
+            // Si es un NetworkObject y no somos nosotros mismos
+            if (hitNetObj != null && hitNetObj.OwnerClientId != OwnerClientId)
             {
-                // Verificar si el objeto golpeado es un jugador enemigo
-                NetworkObject hitNetObj = hit.collider.GetComponent<NetworkObject>();
+                // Verificar si el otro objeto es un jugador
+                PlayerStats enemyStats = hitNetObj.GetComponent<PlayerStats>();
                 
-                // Si es un NetworkObject y no somos nosotros mismos
-                if (hitNetObj != null && hitNetObj.OwnerClientId != OwnerClientId)
+                if (enemyStats != null && playerCombat != null)
                 {
-                    // Verificar si el otro objeto es un jugador
-                    PlayerStats enemyStats = hitNetObj.GetComponent<PlayerStats>();
+                    // Intentar procesar como ataque
+                    bool attacked = playerCombat.ProcessClickOnEnemy(hitNetObj);
                     
-                    if (enemyStats != null && playerCombat != null)
+                    if (attacked)
                     {
-                        // Intentar procesar como ataque
-                        bool attacked = playerCombat.ProcessClickOnEnemy(hitNetObj);
-                        
-                        if (attacked)
-                        {
-                            // Procesado exitosamente como ataque
-                            Debug.Log($"[PLAYER_{playerUniqueId}] Atacando a jugador {hitNetObj.OwnerClientId}");
-                            return;
-                        }
+                        // Procesado exitosamente como ataque
+                        Debug.Log($"[PLAYER_{playerUniqueId}] Atacando a jugador {hitNetObj.OwnerClientId}");
+                        return;
                     }
                 }
             }
         }
     }
+}
     
     private void HandleMouseMovement()
     {
