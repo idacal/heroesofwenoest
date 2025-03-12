@@ -6,9 +6,9 @@ using System.Collections.Generic;
 public class PlayerCombat : NetworkBehaviour
 {
     [Header("Configuración de Ataque")]
-    [SerializeField] private float attackDamage = 2f;
+    [SerializeField] private float attackDamage = 5f;
     [SerializeField] private float attackRange = 15f;
-    [SerializeField] private float attackCooldown = 0.2f;
+    [SerializeField] private float attackCooldown = 0.2f; // Cooldown en segundos (0.2 = 200ms)
     [SerializeField] private LayerMask playerLayer;
     
     [Header("Configuración de Proyectil")]
@@ -16,6 +16,10 @@ public class PlayerCombat : NetworkBehaviour
     [SerializeField] private GameObject projectilePrefab;   // Prefab del proyectil para ataques a distancia
     [SerializeField] private Transform projectileSpawnPoint; // Punto de origen del proyectil (opcional)
     [SerializeField] private bool showCooldownDebug = true; // Para depuración
+
+    [Header("Coste de Maná")]
+    [SerializeField] private float attackManaCost = 2f;    // Coste de maná por ataque
+    [SerializeField] private bool showManaWarnings = true; // Mostrar avisos de maná insuficiente
 
     [Header("Efectos Visuales")]
     [SerializeField] private GameObject attackEffectPrefab;
@@ -31,11 +35,15 @@ public class PlayerCombat : NetworkBehaviour
     private NetworkVariable<bool> isAttacking = new NetworkVariable<bool>(
         false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
-    private NetworkVariable<float> nextAttackTime = new NetworkVariable<float>(
+    // IMPORTANTE: Esta variable debe ser estructurada correctamente para Netcode for GameObjects
+    private NetworkVariable<float> serverAttackTime = new NetworkVariable<float>(
         0f, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
 
     private NetworkVariable<ulong> currentTargetId = new NetworkVariable<ulong>(
         ulong.MaxValue, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+    // Variable local (no de red) para rastrear el tiempo de cooldown local
+    private float localNextAttackTime = 0f;
 
     // Target y seguimiento
     private NetworkObject currentTarget;
@@ -52,7 +60,6 @@ public class PlayerCombat : NetworkBehaviour
         playerStats = GetComponent<PlayerStats>();
     }
 
-    // Método para verificar si el prefab está asignado correctamente
     public void Start()
     {
         if (IsServer && projectilePrefab != null)
@@ -64,14 +71,8 @@ public class PlayerCombat : NetworkBehaviour
             Debug.LogError("❌ ERROR: Prefab de proyectil NO ASIGNADO");
         }
         
-        if (isRangedAttacker)
-        {
-            Debug.Log("✅ Configurado como atacante a distancia");
-        }
-        else
-        {
-            Debug.Log("❗ Configurado como atacante cuerpo a cuerpo (no usará proyectiles)");
-        }
+        // Inicializar tiempo de ataque local
+        localNextAttackTime = 0f;
     }
 
     public override void OnNetworkSpawn()
@@ -81,12 +82,26 @@ public class PlayerCombat : NetworkBehaviour
         // Suscribirse a cambios en las variables de red
         isAttacking.OnValueChanged += OnAttackingChanged;
         currentTargetId.OnValueChanged += OnTargetChanged;
+        serverAttackTime.OnValueChanged += OnServerAttackTimeChanged;
 
         // Si somos el cliente local, buscar la cámara
         if (IsLocalPlayer)
         {
             StartCoroutine(FindPlayerCamera());
             Debug.Log("🎮 PlayerCombat inicializado para jugador local");
+        }
+    }
+
+    // Manejador para cambios en el tiempo de ataque del servidor
+    private void OnServerAttackTimeChanged(float previousValue, float newValue)
+    {
+        if (IsOwner && !IsServer)
+        {
+            // Si somos un cliente (no host), usamos este valor para sincronizar nuestro cooldown local
+            localNextAttackTime = Time.time + attackCooldown;
+            Debug.Log($"[COOLDOWN] Cliente recibió actualización de serverAttackTime: {newValue}, " +
+                      $"estableciendo localNextAttackTime: {localNextAttackTime} " +
+                      $"(tiempo actual + cooldown: {Time.time} + {attackCooldown})");
         }
     }
 
@@ -129,11 +144,18 @@ public class PlayerCombat : NetworkBehaviour
         // Solo procesar lógica para el jugador local
         if (!IsLocalPlayer) return;
 
-        // PRUEBA: Detectar tecla T para prueba de proyectil
+        // Detectar tecla T para prueba de proyectil
         if (Input.GetKeyDown(KeyCode.T))
         {
-            Debug.Log("🧪 Prueba: Tecla T presionada, intentando spawner proyectil");
-            TestSpawnProjectileServerRpc();
+            if (IsAttackReady())
+            {
+                Debug.Log("🧪 Tecla T presionada, intentando lanzar proyectil");
+                TestSpawnProjectileServerRpc();
+            }
+            else
+            {
+                Debug.Log($"🧪 No se puede atacar aún. Time.time: {Time.time}, próximo ataque: {localNextAttackTime}");
+            }
         }
 
         // Si estamos siguiendo a un objetivo para atacar
@@ -143,75 +165,76 @@ public class PlayerCombat : NetworkBehaviour
         }
     }
 
-    // MÉTODO ACTUALIZADO para la prueba de proyectil con tecla T
+    // Método para el ataque con tecla T
     [ServerRpc]
     public void TestSpawnProjectileServerRpc()
     {
-        Debug.Log($"[TEST] ServerRpc en servidor - ClientID: {OwnerClientId}, IsHost: {IsHost}, IsServer: {IsServer}");
+        Debug.Log($"[Ataque T] ServerRpc recibido - ClientID: {OwnerClientId}");
         
-        if (!IsServer) return;
-        
-        // Si estamos en cooldown, rechazar el ataque
-        if (Time.time < nextAttackTime.Value)
+        // Verificar cooldown (solo comprobamos el tiempo en el servidor)
+        float currentTime = Time.time;
+        if (currentTime < serverAttackTime.Value + attackCooldown)
         {
-            float remainingTime = nextAttackTime.Value - Time.time;
-            NotifyInCooldownClientRpc(remainingTime);
+            float remainingTime = (serverAttackTime.Value + attackCooldown) - currentTime;
+            Debug.Log($"[Ataque T] En cooldown por {remainingTime:F1}s");
             return;
         }
         
-        // Configuración básica del disparo
+        // Verificar maná
+        if (playerStats.CurrentMana < attackManaCost)
+        {
+            Debug.Log($"[Ataque T] Maná insuficiente: {playerStats.CurrentMana:F1}/{attackManaCost}");
+            NotifyInsufficientManaClientRpc();
+            return;
+        }
+        
+        // Configuración del disparo
         Vector3 spawnPos = transform.position + transform.forward * 1.2f + Vector3.up * 1.2f;
         Vector3 direction = transform.forward;
         
-        // PASO 1: Encontrar jugador más cercano que esté delante de nosotros
+        // Buscar objetivo cercano
         NetworkObject target = FindTargetInFront(30f);
         
-        // PASO 2: Actualizar cooldown y estado de ataque
+        // Actualizar estado
         isAttacking.Value = true;
-        nextAttackTime.Value = Time.time + attackCooldown;
         
-        // PASO 3: Procesar según si tenemos objetivo o no
+        // IMPORTANTE: Guardar el tiempo actual del servidor para cooldown
+        serverAttackTime.Value = currentTime;
+        
+        // Consumir maná
+        playerStats.UseMana(attackManaCost);
+        
+        // Procesar ataque según si hay objetivo o no
         if (target != null)
         {
-            // Tenemos un objetivo, dirigir hacia él
+            // Con objetivo
             direction = (target.transform.position - spawnPos).normalized;
             currentTargetId.Value = target.OwnerClientId;
             
-            Debug.Log($"[TEST] Objetivo encontrado: {target.name}, ID: {target.OwnerClientId}");
-            
-            // Crear proyectil dirigido al objetivo
-            CombatProjectile projectile = CombatProjectile.SpawnProjectile(
+            // Lanzar proyectil dirigido
+            CombatProjectile.SpawnProjectile(
                 projectilePrefab,
                 spawnPos,
                 direction,
                 attackDamage,
                 OwnerClientId,
-                target  // Con objetivo específico
+                target
             );
-            
-            // Notificar al cliente
-            NotifyTestTargetFoundClientRpc(target.OwnerClientId);
         }
         else
         {
-            // Sin objetivo, disparo simple al frente
-            Debug.Log("[TEST] Sin objetivo, disparo simple al frente");
-            
-            // Crear proyectil sin objetivo específico
-            CombatProjectile projectile = CombatProjectile.SpawnProjectile(
+            // Sin objetivo, disparo al frente
+            CombatProjectile.SpawnProjectile(
                 projectilePrefab,
                 spawnPos,
                 direction,
                 attackDamage,
                 OwnerClientId,
-                null  // Sin objetivo
+                null
             );
-            
-            // Notificar al cliente
-            NotifyNoTargetFoundClientRpc();
         }
         
-        // Mostrar efectos visuales en todos los casos
+        // Mostrar efectos visuales
         SpawnAttackEffectClientRpc(spawnPos, direction);
     }
 
@@ -221,9 +244,6 @@ public class PlayerCombat : NetworkBehaviour
         // Variables para el objetivo más cercano
         NetworkObject bestTarget = null;
         float closestAngleDistance = float.MaxValue;
-        
-        // Colección de jugadores para debug
-        List<string> debugPlayers = new List<string>();
         
         // Buscar entre todos los jugadores conectados
         foreach (var clientPair in NetworkManager.Singleton.ConnectedClients)
@@ -238,8 +258,6 @@ public class PlayerCombat : NetworkBehaviour
             // Verificar componentes necesarios
             PlayerStats stats = otherPlayer.GetComponent<PlayerStats>();
             if (stats == null) continue;
-            
-            debugPlayers.Add($"Player {clientPair.Key}");
             
             // Calcular vectores y distancias
             Vector3 targetPos = otherPlayer.transform.position;
@@ -263,52 +281,47 @@ public class PlayerCombat : NetworkBehaviour
             }
         }
         
-        // Log detallado
-        Debug.Log($"[TEST] Búsqueda de objetivos: encontrados {debugPlayers.Count} jugadores, " +
-                  $"mejor objetivo: {(bestTarget != null ? bestTarget.name : "ninguno")}");
-        
         return bestTarget;
     }
 
-    // Nuevo método ClientRpc para notificar sobre cooldown
+    // Notificación de maná insuficiente
     [ClientRpc]
-    private void NotifyInCooldownClientRpc(float remainingTime)
+    private void NotifyInsufficientManaClientRpc()
     {
         if (!IsOwner) return;
         
-        Debug.Log($"[TEST] No se puede atacar: en cooldown. Tiempo restante: {remainingTime:F1}s");
+        if (showManaWarnings)
+        {
+            Debug.Log($"<color=blue>[Maná]</color> No tienes suficiente maná para atacar. Necesitas {attackManaCost} maná.");
+        }
     }
 
-    // Nuevo método ClientRpc para notificar sobre objetivo encontrado
-    [ClientRpc]
-    private void NotifyTestTargetFoundClientRpc(ulong targetId)
-    {
-        if (!IsOwner) return;
-        
-        Debug.Log($"[TEST] Ataque automático dirigido al jugador {targetId}");
-    }
-
-    // Nuevo método ClientRpc para notificar que no se encontró objetivo
-    [ClientRpc]
-    private void NotifyNoTargetFoundClientRpc()
-    {
-        if (!IsOwner) return;
-        
-        Debug.Log("[TEST] No se encontró ningún objetivo cercano, disparando al frente");
-    }
-
-    // Método para verificar si estamos listos para atacar (cooldown)
+    // Método para verificar si estamos listos para atacar (cooldown y maná)
     public bool IsAttackReady()
     {
-        // Si estamos en cooldown
-        if (Time.time < nextAttackTime.Value)
+        // Verificar maná primero
+        if (playerStats != null && playerStats.CurrentMana < attackManaCost)
         {
-            float remainingCooldown = nextAttackTime.Value - Time.time;
+            if (showManaWarnings && IsOwner)
+            {
+                Debug.Log($"<color=blue>[Maná]</color> No tienes suficiente maná para atacar ({playerStats.CurrentMana:F1}/{attackManaCost} requerido)");
+            }
+            return false;
+        }
+        
+        // IMPORTANTE: Usar la variable local de tiempo para clientes, para evitar problemas de latencia
+        float timeToCheck = IsServer ? (serverAttackTime.Value + attackCooldown) : localNextAttackTime;
+        
+        // Verificar cooldown
+        if (Time.time < timeToCheck)
+        {
+            float remainingCooldown = timeToCheck - Time.time;
             
             // Mostrar tiempo restante (solo para depuración)
-            if (showCooldownDebug && IsOwner && remainingCooldown > 0.1f)
+            if (showCooldownDebug && IsOwner && remainingCooldown > 0.01f)
             {
-                Debug.Log($"[Combat] Ataque en cooldown: {remainingCooldown:F1} segundos restantes");
+                Debug.Log($"[COOLDOWN] Ataque en cooldown: {remainingCooldown:F3}s restantes. " +
+                          $"Current: {Time.time:F3}, Next: {timeToCheck:F3}");
             }
             
             return false;
@@ -319,39 +332,45 @@ public class PlayerCombat : NetworkBehaviour
 
     public bool ProcessClickOnEnemy(NetworkObject enemyObject)
     {
-        Debug.Log($"[Combat] ProcessClickOnEnemy llamado - IsOwner: {IsOwner}");
-        
         if (!IsLocalPlayer || enemyObject == null) {
-            Debug.Log("❌ No somos el jugador local o el enemigo es null");
             return false;
         }
 
-        // NUEVO: Verificación explícita de cooldown
+        // Verificación de cooldown local y depuración
+        if (showCooldownDebug)
+        {
+            Debug.Log($"[CLICK] Verificando ataque - Time.time: {Time.time:F3}, localNextAttackTime: {localNextAttackTime:F3}, " +
+                     $"serverAttackTime: {serverAttackTime.Value:F3}, cooldown: {attackCooldown}");
+        }
+
+        // Verificar cooldown y maná
         if (!IsAttackReady())
         {
-            // Ya en cooldown, mostrar mensaje más claro
-            Debug.Log($"[Combat] No se puede atacar: en cooldown");
-            return true; // Retornamos true porque sí procesamos el clic, aunque no atacamos
+            return true; // Procesamos el clic aunque no podamos atacar
         }
 
         // Verificar si podemos atacar al enemigo
         if (CanAttackTarget(enemyObject))
         {
-            Debug.Log("✅ Podemos atacar al objetivo");
-            
             // Verificar si estamos en rango para atacar inmediatamente
             float distance = Vector3.Distance(transform.position, enemyObject.transform.position);
-            Debug.Log($"📏 Distancia al objetivo: {distance}, Rango: {attackRange}");
             
             if (distance <= attackRange)
             {
-                Debug.Log("🎯 En rango, llamando a AttackTargetServerRpc");
+                Debug.Log($"[CLICK] Atacando directamente al objetivo {enemyObject.OwnerClientId}, " +
+                          $"distancia: {distance:F1}, rango: {attackRange:F1}");
+                
+                // Para evitar retrasos por latencia, actualizamos el tiempo local inmediatamente
+                localNextAttackTime = Time.time + attackCooldown;
+                
                 // Atacar inmediatamente
                 AttackTargetServerRpc(enemyObject.OwnerClientId);
             }
             else
             {
-                Debug.Log("🚶 Fuera de rango, siguiendo al objetivo");
+                Debug.Log($"[CLICK] Fuera de rango, comenzando seguimiento al objetivo {enemyObject.OwnerClientId}, " +
+                          $"distancia: {distance:F1}, rango: {attackRange:F1}");
+                
                 // Seguir al objetivo para luego atacar
                 BeginFollowTarget(enemyObject);
             }
@@ -359,7 +378,6 @@ public class PlayerCombat : NetworkBehaviour
             return true; // Indicar que procesamos el clic
         }
         
-        Debug.Log("❌ No podemos atacar al objetivo");
         return false;
     }
 
@@ -367,20 +385,17 @@ public class PlayerCombat : NetworkBehaviour
     {
         // No podemos atacarnos a nosotros mismos
         if (target.OwnerClientId == OwnerClientId) {
-            Debug.Log("⚔️ No podemos atacarnos a nosotros mismos");
             return false;
         }
 
         // Verificar si el objetivo tiene un PlayerStats
         PlayerStats targetStats = target.GetComponent<PlayerStats>();
         if (targetStats == null) {
-            Debug.Log("⚔️ El objetivo no tiene PlayerStats");
             return false;
         }
 
-        // Verificar si estamos en cooldown
+        // Verificar cooldown y maná
         if (!IsAttackReady()) {
-            Debug.Log($"⚔️ Ataque en cooldown, disponible en {nextAttackTime.Value - Time.time} segundos");
             return false;
         }
 
@@ -391,8 +406,6 @@ public class PlayerCombat : NetworkBehaviour
     private void BeginFollowTarget(NetworkObject target)
     {
         if (target == null) return;
-
-        Debug.Log($"🏃 Comenzando a seguir objetivo: {target.OwnerClientId}");
         
         currentTarget = target;
         isFollowingTarget = true;
@@ -432,8 +445,15 @@ public class PlayerCombat : NetworkBehaviour
                 playerNetwork.StopMovement();
             }
             
-            // Atacar
-            AttackTargetServerRpc(currentTarget.OwnerClientId);
+            // Verificar si podemos atacar (cooldown y maná)
+            if (IsAttackReady())
+            {
+                // Para evitar retrasos por latencia, actualizamos el tiempo local inmediatamente
+                localNextAttackTime = Time.time + attackCooldown;
+                
+                // Atacar
+                AttackTargetServerRpc(currentTarget.OwnerClientId);
+            }
         }
         else
         {
@@ -449,22 +469,30 @@ public class PlayerCombat : NetworkBehaviour
     [ServerRpc]
     private void AttackTargetServerRpc(ulong targetId)
     {
-        Debug.Log($"🚀 SERVER: AttackTargetServerRpc llamado, objetivo: {targetId}");
+        Debug.Log($"[Ataque Click] ServerRpc recibido, objetivo: {targetId}");
         
-        // Verificar cooldown en el servidor
-        if (Time.time < nextAttackTime.Value) 
+        // Verificar cooldown (solo comprobamos el tiempo en el servidor)
+        float currentTime = Time.time;
+        if (currentTime < serverAttackTime.Value + attackCooldown)
         {
-            float remaining = nextAttackTime.Value - Time.time;
-            Debug.Log($"⏱️ SERVER: En cooldown, esperando {remaining:F1} segundos más");
+            float remainingTime = (serverAttackTime.Value + attackCooldown) - currentTime;
+            Debug.Log($"[Ataque Click] En cooldown por {remainingTime:F1}s");
+            return;
+        }
+        
+        // Verificar maná
+        if (playerStats.CurrentMana < attackManaCost)
+        {
+            Debug.Log($"[Ataque Click] Maná insuficiente: {playerStats.CurrentMana:F1}/{attackManaCost}");
+            NotifyInsufficientManaClientRpc();
             return;
         }
 
         // Buscar el objetivo
-        Debug.Log($"🔍 SERVER: Buscando objetivo con ID {targetId}");
         if (!NetworkManager.Singleton.ConnectedClients.TryGetValue(targetId, out var client) ||
             client.PlayerObject == null)
         {
-            Debug.Log("❌ SERVER: Objetivo no encontrado");
+            Debug.Log("[Ataque Click] Objetivo no encontrado");
             return;
         }
 
@@ -472,38 +500,31 @@ public class PlayerCombat : NetworkBehaviour
         PlayerStats targetStats = targetObj.GetComponent<PlayerStats>();
 
         if (targetStats == null) {
-            Debug.Log("❌ SERVER: Objetivo no tiene PlayerStats");
+            Debug.Log("[Ataque Click] Objetivo no tiene PlayerStats");
             return;
         }
-
-        Debug.Log("✅ SERVER: Atacando al objetivo");
         
-        // Actualizar variables de red
+        // Actualizar estado
         isAttacking.Value = true;
-        nextAttackTime.Value = Time.time + attackCooldown;
-        currentTargetId.Value = targetId;
+        
+        // IMPORTANTE: Guardar el tiempo actual del servidor para cooldown
+        serverAttackTime.Value = currentTime;
+        
+        // Consumir maná
+        playerStats.UseMana(attackManaCost);
 
         // Lanzar proyectil o ataque directo
         if (isRangedAttacker && projectilePrefab != null)
         {
-            Debug.Log($"🏹 SERVER: Lanzando proyectil desde {transform.position} a {targetObj.transform.position}");
-            
-            // Comprobar que el prefab existe
-            Debug.Log($"🔍 SERVER: Prefab del proyectil asignado: {(projectilePrefab != null ? "SÍ" : "NO")}");
-            
             // Ataques a distancia: Lanzar proyectil
             LaunchProjectile(targetObj);
         }
         else
         {
-            Debug.Log("⚔️ SERVER: Ataque cuerpo a cuerpo");
             // Ataques cuerpo a cuerpo: Aplicar daño inmediatamente
             targetStats.TakeDamage(attackDamage);
             SpawnHitEffectClientRpc(targetObj.transform.position);
         }
-
-        // Notificar al cliente sobre el cooldown para UI
-        NotifyCooldownClientRpc(attackCooldown);
         
         // Programar fin del ataque
         StartCoroutine(ResetAttackState(0.5f));
@@ -522,16 +543,14 @@ public class PlayerCombat : NetworkBehaviour
         else
         {
             // Calcular posición de origen en el centro del jugador
-            spawnPosition = transform.position + Vector3.up * 1.0f; // Solo añadir un poco de altura
+            spawnPosition = transform.position + Vector3.up * 1.0f;
         }
         
         // Calcular dirección hacia el objetivo
         Vector3 direction = (target.transform.position - spawnPosition).normalized;
         
-        Debug.Log($"🚀 Lanzando proyectil desde {spawnPosition} hacia {target.transform.position}");
-        
         // Spawner el proyectil
-        var projectile = CombatProjectile.SpawnProjectile(
+        CombatProjectile.SpawnProjectile(
             projectilePrefab,
             spawnPosition,
             direction,
@@ -554,40 +573,18 @@ public class PlayerCombat : NetworkBehaviour
             
             GameObject effect = Instantiate(hitEffectPrefab, position, Quaternion.identity);
             Destroy(effect, 2.0f);
-            Debug.Log("💥 Efecto de impacto spawneado");
         }
-
-        // Reproducir sonido de golpe si está implementado
-        // PlayHitSound();
     }
     
     [ClientRpc]
     private void SpawnAttackEffectClientRpc(Vector3 position, Vector3 direction)
     {
-        // Esta función se llama cuando se lanza un proyectil para mostrar efectos visuales
-        // en el punto de origen (como destellos, partículas, etc)
-        
         if (attackEffectPrefab != null)
         {
             // Crear efecto de lanzamiento
             GameObject effect = Instantiate(attackEffectPrefab, position, Quaternion.LookRotation(direction));
             Destroy(effect, 1.0f);
-            Debug.Log("💫 Efecto de ataque spawneado");
         }
-        
-        // Reproducir sonido de lanzamiento si está implementado
-        // PlayAttackSound();
-    }
-
-    // Nuevo método para notificar sobre cooldown a los clientes
-    [ClientRpc]
-    private void NotifyCooldownClientRpc(float duration)
-    {
-        if (!IsOwner) return;
-        
-        Debug.Log($"[Combat] Ataque realizado, próximo disponible en {duration:F1} segundos");
-        
-        // Aquí podrías actualizar alguna UI de cooldown si la tienes
     }
 
     private IEnumerator ResetAttackState(float delay)
@@ -612,8 +609,6 @@ public class PlayerCombat : NetworkBehaviour
                 GameObject effect = Instantiate(attackEffectPrefab, effectPosition, transform.rotation);
                 Destroy(effect, 1.0f);
             }
-            
-            Debug.Log($"⚔️ Jugador {OwnerClientId} está atacando");
         }
     }
 
@@ -628,7 +623,6 @@ public class PlayerCombat : NetworkBehaviour
         else
         {
             // Buscar el objeto de red correspondiente al ID del cliente
-            // sin usar ConnectedClients que solo funciona en el servidor
             currentTarget = FindNetworkObjectByOwnerClientId(newValue);
         }
     }
@@ -665,14 +659,26 @@ public class PlayerCombat : NetworkBehaviour
         currentTargetId.Value = targetId;
     }
 
+    // Método para verificar si estamos en cooldown de ataque
     public bool IsInAttackCooldown()
     {
-        return Time.time < nextAttackTime.Value;
+        // IMPORTANTE: Usar la variable local de tiempo para clientes, para evitar problemas de latencia
+        float timeToCheck = IsServer ? (serverAttackTime.Value + attackCooldown) : localNextAttackTime;
+        return Time.time < timeToCheck;
     }
 
+    // Método para obtener el tiempo restante de cooldown
     public float GetAttackCooldownRemaining()
     {
-        return Mathf.Max(0, nextAttackTime.Value - Time.time);
+        // IMPORTANTE: Usar la variable local de tiempo para clientes, para evitar problemas de latencia
+        float timeToCheck = IsServer ? (serverAttackTime.Value + attackCooldown) : localNextAttackTime;
+        return Mathf.Max(0, timeToCheck - Time.time);
+    }
+    
+    // Método para obtener el costo de maná del ataque
+    public float GetAttackManaCost()
+    {
+        return attackManaCost;
     }
 
     // Método para limpiar el objetivo actual
@@ -696,26 +702,32 @@ public class PlayerCombat : NetworkBehaviour
     {
         if (target == null) return false;
         
-        // No atacar al mismo equipo (opcional, si implementas equipos)
-        // if (SameTeam(target)) return false;
-        
         // Verificar si tiene los componentes necesarios
         return target.GetComponent<PlayerStats>() != null;
     }
     
-    // Opcional: Mostrar UI temporal para cooldown
+    // Opcional: Mostrar UI temporal para cooldown y maná
     private void OnGUI()
     {
         if (IsOwner && showCooldownDebug)
         {
-            float cooldown = nextAttackTime.Value - Time.time;
+            // IMPORTANTE: Usar la variable local de tiempo para clientes, para evitar problemas de latencia
+            float timeToCheck = IsServer ? (serverAttackTime.Value + attackCooldown) : localNextAttackTime;
+            float cooldown = timeToCheck - Time.time;
+            
             if (cooldown > 0)
             {
-                GUI.Label(new Rect(10, 40, 200, 20), $"Ataque disponible en: {cooldown:F1}s");
+                GUI.Label(new Rect(10, 40, 300, 20), $"Ataque en cooldown: {cooldown:F3}s (next: {timeToCheck:F3}, now: {Time.time:F3})");
             }
             else
             {
                 GUI.Label(new Rect(10, 40, 200, 20), "¡Listo para atacar!");
+            }
+            
+            // Mostrar costo de maná del ataque
+            if (playerStats != null)
+            {
+                GUI.Label(new Rect(10, 60, 200, 20), $"Maná: {playerStats.CurrentMana:F1}/{playerStats.MaxMana} (Costo: {attackManaCost})");
             }
         }
     }
