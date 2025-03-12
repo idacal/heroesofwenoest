@@ -300,4 +300,43 @@ public class MOBACamera : MonoBehaviour
             snapToPlayer = true;
         }
     }
+    
+    // Nueva funcionalidad: Método para agregar efecto de cámara shake
+    public void ShakeCamera(float intensity = 0.5f, float duration = 0.5f)
+    {
+        // Iniciar la corrutina de shake
+        StartCoroutine(DoCameraShake(intensity, duration));
+    }
+
+    private System.Collections.IEnumerator DoCameraShake(float intensity, float duration)
+    {
+        // Guardar posición y rotación originales
+        Vector3 originalPosition = transform.position;
+        Quaternion originalRotation = transform.rotation;
+        
+        float elapsed = 0.0f;
+        
+        while (elapsed < duration)
+        {
+            // Generar offset aleatorio de shake
+            float x = Random.Range(-1f, 1f) * intensity;
+            float y = Random.Range(-1f, 1f) * intensity * 0.5f; // Menos shake vertical
+            float z = Random.Range(-1f, 1f) * intensity;
+            
+            // Aplicar offset a la posición
+            transform.position = originalPosition + new Vector3(x, y, z);
+            
+            // También aplicar algo de shake rotacional
+            float pitchShake = Random.Range(-1f, 1f) * intensity * 5f;
+            float yawShake = Random.Range(-1f, 1f) * intensity * 5f;
+            transform.rotation = originalRotation * Quaternion.Euler(pitchShake, yawShake, 0);
+            
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+        
+        // Volver a la posición y rotación originales
+        transform.position = originalPosition;
+        transform.rotation = originalRotation;
+    }
 }

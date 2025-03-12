@@ -38,6 +38,9 @@ public class PlayerRespawnController : NetworkBehaviour
     private bool isInvulnerable = false;
     private int fallCount = 0;
     
+    // Nueva variable para indicar si el respawn es por muerte (vs. caída)
+    private bool isDeathRespawn = false;
+    
     // Referencia al Game Manager para notificar muertes
     private MOBAGameManager gameManager;
     
@@ -67,7 +70,7 @@ public class PlayerRespawnController : NetworkBehaviour
             originalMaterials = new Material[playerRenderers.Length];
             for (int i = 0; i < playerRenderers.Length; i++)
             {
-                if (playerRenderers[i].material != null)
+                if (playerRenderers[i] != null && playerRenderers[i].material != null)
                 {
                     originalMaterials[i] = playerRenderers[i].material;
                 }
@@ -133,6 +136,7 @@ public class PlayerRespawnController : NetworkBehaviour
                 if (IsServer)
                 {
                     // Si somos el servidor, iniciar el proceso de respawn
+                    isDeathRespawn = false; // No es una muerte, es una caída
                     StartRespawnProcess();
                 }
                 else if (IsOwner)
@@ -150,31 +154,57 @@ public class PlayerRespawnController : NetworkBehaviour
         // Verificar que no estemos ya en respawn
         if (!isRespawning.Value)
         {
+            isDeathRespawn = false; // Marcar como caída, no muerte
             StartRespawnProcess();
         }
+    }
+    
+    // Método público para forzar un respawn (usado por PlayerStats cuando el jugador muere)
+    public void ForceRespawn()
+    {
+        if (IsServer)
+        {
+            isDeathRespawn = true; // Marcar como respawn por muerte
+            StartRespawnProcess();
+        }
+        else
+        {
+            ForceRespawnServerRpc();
+        }
+    }
+    
+    [ServerRpc(RequireOwnership = false)]
+    private void ForceRespawnServerRpc()
+    {
+        isDeathRespawn = true; // Marcar como respawn por muerte
+        StartRespawnProcess();
     }
     
     private void StartRespawnProcess()
     {
         if (!IsServer) return;
         
-        Debug.Log($"[RespawnController] Jugador {OwnerClientId} cayó de la plataforma. Iniciando respawn...");
+        string reason = isDeathRespawn ? "murió" : "cayó de la plataforma";
+        Debug.Log($"[RespawnController] Jugador {OwnerClientId} {reason}. Iniciando respawn...");
         
         // Activar el estado de respawn
         isRespawning.Value = true;
         
-        // Incrementar contador de caídas
-        fallCount++;
+        // Incrementar contador de caídas (solo si es una caída real)
+        if (!isDeathRespawn)
+        {
+            fallCount++;
+        }
         
         // Notificar la caída/muerte al Game Manager si existe
         if (gameManager != null)
         {
-            // Aquí podrías llamar a un método en el Game Manager para registrar la caída
-            // Por ejemplo: gameManager.RegisterPlayerFall(OwnerClientId, playerTeam.Value);
+            // Aquí podrías llamar a un método en el Game Manager para registrar la caída/muerte
+            // Por ejemplo: gameManager.RegisterPlayerDeath(OwnerClientId, playerTeam.Value, isDeathRespawn);
         }
         
         // Mostrar efecto de muerte en la posición actual
-        SpawnDeathEffectClientRpc(transform.position);
+        SpawnDeathEffectClientRpc(transform.position, isDeathRespawn);
         
         // Programar el respawn después de un delay
         StartCoroutine(RespawnAfterDelay());
@@ -187,11 +217,23 @@ public class PlayerRespawnController : NetworkBehaviour
         // Esperar el tiempo de respawn
         yield return new WaitForSeconds(respawnDelay);
         
-        // Determinar punto de spawn basado en el equipo
+        // Determinar punto de spawn basado en el equipo y si es muerte o caída
         Vector3 spawnPosition = GetRespawnPosition();
         
         // Teleportar al jugador a la posición de respawn
         TeleportPlayerClientRpc(spawnPosition);
+        
+        // NUEVO: Restablecer la salud y maná del jugador a los valores máximos
+        if (playerStats != null)
+        {
+            // Restaurar salud al máximo
+            playerStats.Heal(playerStats.MaxHealth);
+            
+            // Restaurar maná al máximo
+            playerStats.RestoreMana(playerStats.MaxMana);
+            
+            Debug.Log($"[RespawnController] Restablecida salud y maná de jugador {OwnerClientId} a valores máximos");
+        }
         
         // Breve pausa antes de reactivar al jugador
         yield return new WaitForSeconds(0.5f);
@@ -203,8 +245,18 @@ public class PlayerRespawnController : NetworkBehaviour
     
     private Vector3 GetRespawnPosition()
     {
-        // Punto de spawn predeterminado
-        Vector3 defaultPosition = new Vector3(0f, 5f, 0f);
+        // Posición del centro del mapa para respawns por muerte
+        Vector3 centerMapPosition = new Vector3(0f, 5f, 0f);
+        
+        // Si es un respawn por muerte, usar el centro del mapa
+        if (isDeathRespawn)
+        {
+            Debug.Log($"[RespawnController] Respawn por muerte, usando centro del mapa");
+            return centerMapPosition;
+        }
+        
+        // Punto de spawn predeterminado (si no hay puntos de equipo)
+        Vector3 defaultPosition = centerMapPosition;
         
         // Determinar array de spawn points según el equipo
         Transform[] spawnPoints = null;
@@ -240,34 +292,55 @@ public class PlayerRespawnController : NetworkBehaviour
     }
     
     [ClientRpc]
-    private void SpawnDeathEffectClientRpc(Vector3 position)
-    {
-        // Crear efecto visual de muerte/caída
-        if (deathEffectPrefab != null)
-        {
-            GameObject effect = Instantiate(deathEffectPrefab, position, Quaternion.identity);
-            Destroy(effect, 3.0f); // Destruir después de 3 segundos
-        }
-    }
-    
-    [ClientRpc]
     private void TeleportPlayerClientRpc(Vector3 position)
     {
-        // Teleportar al jugador a la posición indicada
+        // NUEVO: Asegurar que todo el objeto esté activo
+        gameObject.SetActive(true);
+        
+        // Teletransportar al jugador a la posición indicada
         transform.position = position;
         
-        // Si tenemos Rigidbody, resetear su velocidad
+        // NUEVO: Asegurar que todos los renderizadores estén activos
+        Renderer[] allRenderers = GetComponentsInChildren<Renderer>(true); // incluir inactivos
+        foreach (var renderer in allRenderers)
+        {
+            renderer.enabled = true;
+        }
+        
+        // Si tenemos Rigidbody, resetear su velocidad y asegurarnos que la física esté correcta
         Rigidbody rb = GetComponent<Rigidbody>();
         if (rb != null)
         {
+            // Detener cualquier movimiento
             rb.velocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
+            
+            // Asegurar que la gravedad esté activada
+            rb.useGravity = true;
+            rb.isKinematic = false;
+            
+            // Aplicar un pequeño impulso hacia arriba para evitar atravesar el suelo
+            rb.AddForce(Vector3.up * 2f, ForceMode.Impulse);
         }
         
-        // NUEVO: Centrar la cámara en el jugador si somos el propietario
+        // Asegurar que el collider esté habilitado
+        if (playerCollider != null)
+        {
+            playerCollider.enabled = true;
+        }
+        
+        // NUEVO: Actualizar la lista de renderizadores
+        playerRenderers = GetComponentsInChildren<Renderer>();
+        
+        // NUEVO: Debug log
+        Debug.Log($"[RespawnController] Jugador teleportado a {position}. Renderizadores encontrados: {playerRenderers.Length}");
+        
+        // Verificar suelo y ajustar posición si es necesario
+        StartCoroutine(VerifyGroundCollision());
+        
+        // Centrar la cámara en el jugador si somos el propietario
         if (IsOwner && playerCamera != null)
         {
-            // Invocar en el próximo frame para darle tiempo al jugador de posicionarse
             StartCoroutine(CenterCameraNextFrame());
         }
         
@@ -279,6 +352,97 @@ public class PlayerRespawnController : NetworkBehaviour
         }
         
         Debug.Log($"[RespawnController] Jugador {OwnerClientId} reapareció en {position}");
+        
+        // NUEVO: Notificar al PlayerNetwork para sincronizar la posición con el servidor
+        PlayerNetwork playerNet = GetComponent<PlayerNetwork>();
+        if (playerNet != null && IsOwner)
+        {
+            playerNet.UpdatePositionServerRpc(position, transform.rotation);
+        }
+    }
+    
+    // NUEVO: Método auxiliar para forzar la visibilidad
+    public void ForceVisibility()
+    {
+        // Asegurar que todo el objeto esté activo
+        gameObject.SetActive(true);
+        
+        // Activar todos los renderizadores
+        Renderer[] allRenderers = GetComponentsInChildren<Renderer>(true);
+        foreach (var renderer in allRenderers)
+        {
+            renderer.enabled = true;
+        }
+        
+        // Actualizar la lista de renderizadores
+        playerRenderers = GetComponentsInChildren<Renderer>();
+        
+        Debug.Log($"[RespawnController] Forzando visibilidad del jugador. Renderizadores activados: {allRenderers.Length}");
+    }
+    
+    // NUEVO: Método para verificar la colisión con el suelo
+    private IEnumerator VerifyGroundCollision()
+    {
+        // Esperar a que pase un frame para que la física se actualice
+        yield return new WaitForFixedUpdate();
+        
+        // Verificar si hay suelo debajo del jugador mediante un raycast
+        RaycastHit hit;
+        float maxGroundCheckDistance = 50f;
+        float groundOffset = 1.0f; // Altura sobre el suelo a mantener
+        
+        if (Physics.Raycast(transform.position, Vector3.down, out hit, maxGroundCheckDistance))
+        {
+            // Si estamos muy lejos del suelo, ajustar posición
+            if (hit.distance > 5f)
+            {
+                // Posición ajustada: punto de impacto + offset en Y
+                Vector3 adjustedPosition = hit.point + Vector3.up * groundOffset;
+                transform.position = adjustedPosition;
+                
+                // Ajustar Rigidbody si existe
+                Rigidbody rb = GetComponent<Rigidbody>();
+                if (rb != null)
+                {
+                    rb.velocity = Vector3.zero;
+                    rb.position = adjustedPosition;
+                }
+                
+                Debug.Log($"[RespawnController] Ajustando posición para evitar caída. Distancia al suelo: {hit.distance}");
+            }
+        }
+        else
+        {
+            // No se encontró suelo, intentar reposicionar en el origen con un offset en Y
+            Debug.LogWarning("[RespawnController] No se encontró suelo debajo del jugador. Reposicionando en origen.");
+            
+            // Posicionar en el origen con altura segura
+            Vector3 safePosition = new Vector3(0f, 5f, 0f);
+            transform.position = safePosition;
+            
+            // Ajustar Rigidbody si existe
+            Rigidbody rb = GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.velocity = Vector3.zero;
+                rb.position = safePosition;
+            }
+        }
+        
+        // Asegurar que el jugador no atraviese el suelo haciendo verificaciones adicionales
+        for (int i = 0; i < 5; i++)
+        {
+            yield return new WaitForFixedUpdate();
+            
+            // Si empezamos a caer muy rápido, intentar corregir
+            Rigidbody rb = GetComponent<Rigidbody>();
+            if (rb != null && rb.velocity.y < -10f)
+            {
+                rb.velocity = new Vector3(rb.velocity.x, 0f, rb.velocity.z);
+                rb.AddForce(Vector3.up * 5f, ForceMode.Impulse);
+                Debug.Log("[RespawnController] Corrigiendo caída rápida post-respawn");
+            }
+        }
     }
     
     // NUEVO: Método para centrar la cámara en el próximo frame
@@ -325,14 +489,40 @@ public class PlayerRespawnController : NetworkBehaviour
         // Activar estado de invulnerabilidad
         isInvulnerable = true;
         
+        // NUEVO: Asegurarnos que los renderizadores estén activos
+        if (playerRenderers != null)
+        {
+            foreach (var renderer in playerRenderers)
+            {
+                if (renderer != null)
+                {
+                    renderer.enabled = true;
+                }
+            }
+        }
+        
         // Aplicar material fantasma si existe
         if (ghostMaterial != null && playerRenderers != null)
         {
             foreach (var renderer in playerRenderers)
             {
-                renderer.material = ghostMaterial;
+                if (renderer != null)
+                {
+                    // Guardar material original de nuevo, por si acaso
+                    int index = System.Array.IndexOf(playerRenderers, renderer);
+                    if (index >= 0 && index < originalMaterials.Length)
+                    {
+                        originalMaterials[index] = renderer.material;
+                    }
+                    
+                    // Aplicar material fantasma
+                    renderer.material = ghostMaterial;
+                }
             }
         }
+        
+        // Debug log para verificar estado
+        Debug.Log($"[RespawnController] Iniciando invulnerabilidad. Renderizadores activos: {playerRenderers?.Length ?? 0}");
         
         // Esperar el tiempo de invulnerabilidad
         yield return new WaitForSeconds(invulnerabilityTime);
@@ -342,9 +532,12 @@ public class PlayerRespawnController : NetworkBehaviour
         {
             for (int i = 0; i < playerRenderers.Length; i++)
             {
-                if (i < originalMaterials.Length && originalMaterials[i] != null)
+                if (playerRenderers[i] != null && i < originalMaterials.Length && originalMaterials[i] != null)
                 {
                     playerRenderers[i].material = originalMaterials[i];
+                    
+                    // NUEVO: Asegurar que el renderizador permanezca activado
+                    playerRenderers[i].enabled = true;
                 }
             }
         }
@@ -353,6 +546,147 @@ public class PlayerRespawnController : NetworkBehaviour
         isInvulnerable = false;
         
         Debug.Log($"[RespawnController] Invulnerabilidad terminada para jugador {OwnerClientId}");
+    }
+    
+    [ClientRpc]
+    private void SpawnDeathEffectClientRpc(Vector3 position, bool isDeathEffect = false)
+    {
+        // Crear un efecto más dramático para muerte vs caída
+        GameObject effect = null;
+        
+        if (isDeathEffect)
+        {
+            // Crear explosión de muerte (más dramática)
+            effect = new GameObject("PlayerDeathExplosion");
+            effect.transform.position = position + Vector3.up;
+            
+            // Añadir sistema de partículas para muerte
+            ParticleSystem particles = effect.AddComponent<ParticleSystem>();
+            
+            // Configurar ajustes principales de partículas
+            var main = particles.main;
+            main.startSpeed = 8.0f;
+            main.startSize = 0.8f;
+            main.startLifetime = 2.0f;
+            main.startColor = Color.red;
+            
+            // Configurar forma de emisión
+            var shape = particles.shape;
+            shape.shapeType = ParticleSystemShapeType.Sphere;
+            shape.radius = 1.0f;
+            
+            // Configurar burst de partículas
+            var emission = particles.emission;
+            emission.rateOverTime = 0;
+            var burst = new ParticleSystem.Burst(0.0f, 100);
+            emission.SetBurst(0, burst);
+            
+            // Añadir color a lo largo de la vida para un efecto más dramático
+            var colorOverLifetime = particles.colorOverLifetime;
+            colorOverLifetime.enabled = true;
+            
+            // Crear gradiente de rojo a naranja a transparente
+            Gradient gradient = new Gradient();
+            gradient.SetKeys(
+                new GradientColorKey[] 
+                { 
+                    new GradientColorKey(Color.red, 0.0f),
+                    new GradientColorKey(new Color(1f, 0.6f, 0f), 0.5f),
+                    new GradientColorKey(new Color(0.7f, 0.3f, 0f), 1.0f)
+                },
+                new GradientAlphaKey[] 
+                { 
+                    new GradientAlphaKey(1.0f, 0.0f),
+                    new GradientAlphaKey(0.8f, 0.5f),
+                    new GradientAlphaKey(0.0f, 1.0f)
+                }
+            );
+            colorOverLifetime.color = gradient;
+            
+            // Añadir luz para efecto dramático
+            Light light = effect.AddComponent<Light>();
+            light.color = Color.red;
+            light.intensity = 5.0f;
+            light.range = 10.0f;
+            
+            // Hacer que la luz parpadee y se desvanezca
+            StartCoroutine(FadeLight(light, 2.0f));
+            
+            // Si somos el propietario, sacudir la cámara
+            if (IsOwner)
+            {
+                // Intentar encontrar la cámara para sacudirla
+                ShakeCameraOnDeath();
+            }
+        }
+        else
+        {
+            // Para efectos que no son muerte (caídas), usar un efecto más simple
+            // Podrías añadir un efecto simple aquí o reutilizar uno existente
+            if (deathEffectPrefab != null)
+            {
+                effect = Instantiate(deathEffectPrefab, position, Quaternion.identity);
+            }
+        }
+        
+        // Destruir el efecto después de un tiempo
+        if (effect != null)
+        {
+            Destroy(effect, 3.0f);
+        }
+    }
+    
+    // Encontrar la cámara del jugador y sacudirla
+    private void ShakeCameraOnDeath()
+    {
+        // Método 1: Intentar con Main Camera
+        Camera camera = Camera.main;
+        if (camera != null)
+        {
+            MOBACamera mobaCamera = camera.GetComponent<MOBACamera>();
+            if (mobaCamera != null)
+            {
+                mobaCamera.ShakeCamera(1.0f, 1.0f);
+                return;
+            }
+        }
+        
+        // Método 2: Buscar todas las MOBACameras y verificar su objetivo
+        MOBACamera[] allCameras = FindObjectsOfType<MOBACamera>();
+        foreach (MOBACamera mobaCam in allCameras)
+        {
+            if (mobaCam.GetTarget() == transform)
+            {
+                mobaCam.ShakeCamera(1.0f, 1.0f);
+                return;
+            }
+        }
+    }
+    
+    // Efecto de fade de luz
+    private IEnumerator FadeLight(Light light, float duration)
+    {
+        float elapsed = 0f;
+        float startIntensity = light.intensity;
+        float flickerSpeed = 20f;
+        
+        while (elapsed < duration)
+        {
+            // Añadir efecto de parpadeo
+            float flickerFactor = Mathf.PerlinNoise(elapsed * flickerSpeed, 0) * 0.5f + 0.5f;
+            
+            // Calcular factor de desvanecimiento
+            float fadeOutFactor = 1.0f - (elapsed / duration);
+            
+            // Aplicar ambos efectos
+            light.intensity = startIntensity * flickerFactor * fadeOutFactor;
+            
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+        
+        // Asegurar que la luz está completamente apagada al final
+        light.intensity = 0;
     }
     
     // Reacción a cambios en la variable de red isRespawning
@@ -402,12 +736,25 @@ public class PlayerRespawnController : NetworkBehaviour
     
     private void EnablePlayerControl()
     {
-        // Reactivar controles del jugador y colisiones
+        // NUEVO: Forzar visibilidad
+        ForceVisibility();
         
-        // Reactivar colisiones
+        // Reactivar colisiones explícitamente
         if (playerCollider != null)
         {
             playerCollider.enabled = true;
+        }
+        
+        // Asegurar que la física esté correctamente configurada
+        Rigidbody rb = GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.isKinematic = false;
+            rb.useGravity = true;
+            rb.velocity = Vector3.zero;
+            
+            // Asegurarnos que las constraints estén correctas (solo congelar rotación)
+            rb.constraints = RigidbodyConstraints.FreezeRotation;
         }
         
         // Reactivar el controlador de habilidades
@@ -420,6 +767,12 @@ public class PlayerRespawnController : NetworkBehaviour
         if (playerNetwork != null)
         {
             playerNetwork.SetPlayerControlEnabled(true);
+            
+            // NUEVO: Forzar sincronización de posición con el servidor
+            if (IsOwner)
+            {
+                playerNetwork.UpdatePositionServerRpc(transform.position, transform.rotation);
+            }
         }
         
         // Solo enviar notificación de UI al propietario
@@ -465,24 +818,5 @@ public class PlayerRespawnController : NetworkBehaviour
     public int GetFallCount()
     {
         return fallCount;
-    }
-    
-    // Método para forzar un respawn (útil para testing o eventos de juego)
-    public void ForceRespawn()
-    {
-        if (IsServer)
-        {
-            StartRespawnProcess();
-        }
-        else
-        {
-            ForceRespawnServerRpc();
-        }
-    }
-    
-    [ServerRpc(RequireOwnership = false)]
-    private void ForceRespawnServerRpc()
-    {
-        StartRespawnProcess();
     }
 }

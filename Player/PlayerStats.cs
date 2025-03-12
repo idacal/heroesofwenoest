@@ -198,39 +198,163 @@ public class PlayerStats : NetworkBehaviour
     // Método para manejar la muerte del jugador
     private void HandlePlayerDeath()
     {
-        // Aquí puedes implementar la lógica de muerte
-        // Por ahora, solo mostramos un mensaje de depuración
         Debug.Log($"[PlayerStats] Jugador {OwnerClientId} ha muerto!");
         
-        // Ejemplo: Forzar respawn si tenemos el componente
+        // Notificar a todos los clientes sobre la muerte
+        NotifyDeathClientRpc();
+        
+        // Forzar respawn si tenemos el componente
         PlayerRespawnController respawnController = GetComponent<PlayerRespawnController>();
         if (respawnController != null)
         {
             respawnController.ForceRespawn();
         }
-        
-        // Ejemplo: Mostrar efecto de muerte
-        ShowDeathEffectClientRpc(transform.position);
+        else
+        {
+            Debug.LogError($"[PlayerStats] No se encontró PlayerRespawnController en el jugador {OwnerClientId}");
+        }
     }
 
-    // Método para que el servidor consuma maná
-    public bool UseMana(float amount)
+    [ClientRpc]
+    private void NotifyDeathClientRpc()
     {
-        if (!IsServer) return false;
-        
-        // Verificar si hay suficiente maná
-        if (networkMana.Value >= amount)
+        if (IsOwner)
         {
-            networkMana.Value -= amount;
-            Debug.Log($"[PlayerStats] Jugador {OwnerClientId} usó {amount} de maná. Maná restante: {networkMana.Value}");
-            return true;
+            // Efectos locales para el jugador que murió
+            Debug.Log("<color=red><size=20>¡HAS MUERTO!</size></color>");
+            
+            // Sacudir la cámara
+            ShakeOwnerCamera();
         }
         
-        Debug.Log($"[PlayerStats] Jugador {OwnerClientId} intentó usar {amount} de maná pero solo tiene {networkMana.Value}");
-        return false;
+        // Efectos visuales en el jugador (para todos los clientes)
+        StartCoroutine(PlayerDeathEffect());
     }
-    
-    // Método para curar al jugador (desde el servidor)
+
+    private void ShakeOwnerCamera()
+    {
+        // Intentar encontrar la cámara del jugador
+        // Método 1: Intentar con la Main Camera
+        Camera camera = Camera.main;
+        if (camera != null)
+        {
+            MOBACamera mobaCamera = camera.GetComponent<MOBACamera>();
+            if (mobaCamera != null)
+            {
+                mobaCamera.ShakeCamera(0.8f, 0.7f);
+                return;
+            }
+        }
+        
+        // Método 2: Buscar todas las MOBACameras y verificar su objetivo
+        MOBACamera[] allCameras = FindObjectsOfType<MOBACamera>();
+        foreach (MOBACamera mobaCam in allCameras)
+        {
+            if (mobaCam.GetTarget() == transform)
+            {
+                mobaCam.ShakeCamera(0.8f, 0.7f);
+                return;
+            }
+        }
+        
+        Debug.LogWarning("[PlayerStats] No se pudo encontrar una cámara para aplicar el efecto de shake");
+    }
+
+    private System.Collections.IEnumerator PlayerDeathEffect()
+    {
+        // Obtener todos los renderers adjuntos al jugador
+        Renderer[] renderers = GetComponentsInChildren<Renderer>();
+        Material[] originalMaterials = new Material[renderers.Length];
+        
+        // Crear un material de muerte (rojo brillante)
+        Material deathMaterial = new Material(Shader.Find("Standard"));
+        deathMaterial.color = Color.red;
+        deathMaterial.EnableKeyword("_EMISSION");
+        deathMaterial.SetColor("_EmissionColor", Color.red * 3f);
+        
+        // Aplicar material de muerte a todos los renderers
+        for (int i = 0; i < renderers.Length; i++)
+        {
+            // Guardar material original
+            originalMaterials[i] = renderers[i].material;
+            
+            // Aplicar material de muerte
+            renderers[i].material = deathMaterial;
+        }
+        
+        // Crear efecto de explosión
+        GameObject explosionEffect = new GameObject("DeathExplosion");
+        explosionEffect.transform.position = transform.position + Vector3.up;
+        
+        // Añadir sistema de partículas
+        ParticleSystem particles = explosionEffect.AddComponent<ParticleSystem>();
+        var main = particles.main;
+        main.startSpeed = 5.0f;
+        main.startSize = 0.5f;
+        main.startLifetime = 1.5f;
+        main.startColor = Color.red;
+        
+        // Configurar forma de emisión
+        var shape = particles.shape;
+        shape.shapeType = ParticleSystemShapeType.Sphere;
+        shape.radius = 0.5f;
+        
+        // Configurar burst de partículas
+        var emission = particles.emission;
+        emission.rateOverTime = 0;
+        var burst = new ParticleSystem.Burst(0.0f, 50);
+        emission.SetBurst(0, burst);
+        
+        // Configurar tamaño a lo largo de la vida
+        var sizeOverLifetime = particles.sizeOverLifetime;
+        sizeOverLifetime.enabled = true;
+        AnimationCurve sizeOverLifetimeCurve = new AnimationCurve();
+        sizeOverLifetimeCurve.AddKey(0.0f, 1.0f);
+        sizeOverLifetimeCurve.AddKey(1.0f, 0.0f);
+        sizeOverLifetime.size = new ParticleSystem.MinMaxCurve(1.0f, sizeOverLifetimeCurve);
+        
+        // Añadir luz
+        Light light = explosionEffect.AddComponent<Light>();
+        light.color = Color.red;
+        light.intensity = 5.0f;
+        light.range = 8.0f;
+        
+        // Hacer que la luz parpadee
+        StartCoroutine(FlashLight(light));
+        
+        // Esperar un momento
+        yield return new WaitForSeconds(1.5f);
+        
+        // Restaurar los materiales originales si el jugador sigue vivo
+        if (this != null && gameObject.activeInHierarchy)
+        {
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                if (renderers[i] != null && originalMaterials[i] != null)
+                {
+                    renderers[i].material = originalMaterials[i];
+                }
+            }
+        }
+        
+        // Destruir el efecto después de un tiempo
+        Destroy(explosionEffect, 2.0f);
+    }
+
+    private System.Collections.IEnumerator FlashLight(Light light)
+    {
+        float duration = 1.5f;
+        float elapsed = 0f;
+        
+        while (elapsed < duration)
+        {
+            light.intensity = Mathf.Lerp(5.0f, 0f, elapsed / duration);
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+    }
+
+    // Método público para curar al jugador (desde el servidor)
     public void Heal(float amount)
     {
         if (!IsServer) return;
@@ -308,6 +432,23 @@ public class PlayerStats : NetworkBehaviour
     private void ResetDamageReductionServerRpc()
     {
         ResetDamageReduction();
+    }
+    
+    // Método para que el servidor consuma maná
+    public bool UseMana(float amount)
+    {
+        if (!IsServer) return false;
+        
+        // Verificar si hay suficiente maná
+        if (networkMana.Value >= amount)
+        {
+            networkMana.Value -= amount;
+            Debug.Log($"[PlayerStats] Jugador {OwnerClientId} usó {amount} de maná. Maná restante: {networkMana.Value}");
+            return true;
+        }
+        
+        Debug.Log($"[PlayerStats] Jugador {OwnerClientId} intentó usar {amount} de maná pero solo tiene {networkMana.Value}");
+        return false;
     }
     
     // Efectos visuales de daño
