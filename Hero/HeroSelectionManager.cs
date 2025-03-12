@@ -16,6 +16,7 @@ public class HeroSelectionManager : NetworkBehaviour
     [Header("Settings")]
     [SerializeField] private float selectionTimeLimit = 30f; // Optional time limit for selection
     [SerializeField] private bool allowDuplicateHeroes = true; // Whether multiple players can select the same hero
+    [SerializeField] private bool debugMode = true; // Enable additional debug logs
     
     // Network variables for syncing hero selections
     private NetworkVariable<float> selectionTimeRemaining = new NetworkVariable<float>(
@@ -73,6 +74,32 @@ public class HeroSelectionManager : NetworkBehaviour
             // Reset local state
             localSelectedHeroIndex = -1;
             localPlayerReady = false;
+            
+            // Log available heroes for debugging
+            if (debugMode)
+            {
+                LogAvailableHeroes();
+            }
+        }
+    }
+    
+    private void LogAvailableHeroes()
+    {
+        Debug.Log($"[HeroSelectionManager] Available Heroes: {availableHeroes?.Length ?? 0}");
+        
+        if (availableHeroes != null)
+        {
+            for (int i = 0; i < availableHeroes.Length; i++)
+            {
+                if (availableHeroes[i] != null)
+                {
+                    Debug.Log($"[Hero {i}] Name: {availableHeroes[i].heroName}, Class: {availableHeroes[i].heroClass}");
+                }
+                else
+                {
+                    Debug.LogWarning($"[Hero {i}] NULL REFERENCE!");
+                }
+            }
         }
     }
     
@@ -80,6 +107,41 @@ public class HeroSelectionManager : NetworkBehaviour
     {
         // Unsubscribe from events
         playerSelections.OnListChanged -= OnPlayerSelectionsChanged;
+    }
+    
+    private void Update()
+    {
+        // Only the server needs to update the timer
+        if (IsServer && selectionTimeLimit > 0)
+        {
+            // Update timer each frame for more precise timing
+            selectionTimeRemaining.Value = Mathf.Max(0, selectionTimeRemaining.Value - Time.deltaTime);
+            
+            // If time's up, force all players to confirm
+            if (selectionTimeRemaining.Value <= 0)
+            {
+                ForceConfirmAllPlayers();
+            }
+            // Notify players when time is running low
+            else if (selectionTimeRemaining.Value <= 10 && selectionTimeRemaining.Value % 1 < 0.1f)
+            {
+                int secondsLeft = Mathf.CeilToInt(selectionTimeRemaining.Value);
+                NotifyTimeRemainingClientRpc(secondsLeft);
+            }
+        }
+    }
+    
+    [ClientRpc]
+    private void NotifyTimeRemainingClientRpc(int secondsLeft)
+    {
+        if (secondsLeft <= 5)
+        {
+            Debug.Log($"<color=red>WARNING: Only {secondsLeft} seconds left to select a hero!</color>");
+        }
+        else if (secondsLeft <= 10)
+        {
+            Debug.Log($"<color=yellow>Time running out: {secondsLeft} seconds left for hero selection</color>");
+        }
     }
     
     private void InitializeSelectionPhase()
@@ -100,28 +162,15 @@ public class HeroSelectionManager : NetworkBehaviour
                     selectedHeroIndex = -1, // -1 means no selection yet
                     isReady = false
                 });
+                
+                Debug.Log($"[HeroSelectionManager] Added player {clientId} to selection tracker");
             }
             
-            // Start the selection timer if using time limit
+            // Start the selection timer
             if (selectionTimeLimit > 0)
             {
                 selectionTimeRemaining.Value = selectionTimeLimit;
-                InvokeRepeating(nameof(UpdateSelectionTimer), 1f, 1f);
-            }
-        }
-    }
-    
-    private void UpdateSelectionTimer()
-    {
-        if (IsServer)
-        {
-            selectionTimeRemaining.Value -= 1f;
-            
-            if (selectionTimeRemaining.Value <= 0)
-            {
-                // Time's up, force all players to confirm with current selections
-                ForceConfirmAllPlayers();
-                CancelInvoke(nameof(UpdateSelectionTimer));
+                Debug.Log($"[HeroSelectionManager] Started selection timer: {selectionTimeLimit}s");
             }
         }
     }
@@ -133,6 +182,8 @@ public class HeroSelectionManager : NetworkBehaviour
             Debug.Log("[HeroSelectionManager] Time's up! Forcing player confirmations");
             // For each player that hasn't made a selection, assign a random hero
             // And for each player that hasn't confirmed, force confirm
+            bool anyConfirmationForced = false;
+            
             for (int i = 0; i < playerSelections.Count; i++)
             {
                 PlayerHeroSelection selection = playerSelections[i];
@@ -142,18 +193,55 @@ public class HeroSelectionManager : NetworkBehaviour
                 {
                     selection.selectedHeroIndex = UnityEngine.Random.Range(0, availableHeroes.Length);
                     Debug.Log($"[HeroSelectionManager] Assigned random hero {selection.selectedHeroIndex} to player {selection.clientId}");
+                    anyConfirmationForced = true;
                 }
                 
-                // Force ready
-                selection.isReady = true;
+                // If not ready, force ready
+                if (!selection.isReady)
+                {
+                    selection.isReady = true;
+                    anyConfirmationForced = true;
+                    NotifyForcedSelectionClientRpc(selection.clientId, selection.selectedHeroIndex);
+                }
                 
                 // Update in the list
                 playerSelections[i] = selection;
             }
             
-            // Check if we should start the game
-            CheckAllPlayersReady();
+            if (anyConfirmationForced)
+            {
+                // Allow a moment for clients to see the forced selection notifications
+                StartCoroutine(DelayedCheckAllPlayersReady(1.0f));
+            }
+            else
+            {
+                // Check if we should start the game
+                CheckAllPlayersReady();
+            }
         }
+    }
+    
+    [ClientRpc]
+    private void NotifyForcedSelectionClientRpc(ulong clientId, int heroIndex)
+    {
+        // Only show notification to the affected player
+        if (clientId == NetworkManager.Singleton.LocalClientId)
+        {
+            if (availableHeroes != null && heroIndex >= 0 && heroIndex < availableHeroes.Length)
+            {
+                Debug.Log($"<color=orange>Time's up! You've been automatically assigned {availableHeroes[heroIndex].heroName}</color>");
+            }
+            else
+            {
+                Debug.Log("<color=orange>Time's up! A hero has been automatically selected for you</color>");
+            }
+        }
+    }
+    
+    private System.Collections.IEnumerator DelayedCheckAllPlayersReady(float delay)
+    {
+        yield return new UnityEngine.WaitForSeconds(delay);
+        CheckAllPlayersReady();
     }
     
     // Called by UI when player selects a hero (but doesn't confirm yet)
@@ -206,7 +294,7 @@ public class HeroSelectionManager : NetworkBehaviour
         if (!allowDuplicateHeroes && IsHeroSelected(heroIndex, clientId))
         {
             Debug.LogWarning($"Hero {availableHeroes[heroIndex].heroName} already selected by another player");
-            // Could send a notification to the client here
+            NotifyHeroUnavailableClientRpc(clientId, heroIndex);
             return;
         }
         
@@ -221,6 +309,22 @@ public class HeroSelectionManager : NetworkBehaviour
                 playerSelections[i] = selection;
                 Debug.Log($"[HeroSelectionManager] Player {clientId} selected hero: {availableHeroes[heroIndex].heroName}");
                 break;
+            }
+        }
+    }
+    
+    [ClientRpc]
+    private void NotifyHeroUnavailableClientRpc(ulong clientId, int heroIndex)
+    {
+        // Only show notification to the affected player
+        if (clientId == NetworkManager.Singleton.LocalClientId)
+        {
+            Debug.Log($"<color=red>Hero {availableHeroes[heroIndex].heroName} is already selected by another player!</color>");
+            
+            // Reset local selection state
+            if (localSelectedHeroIndex == heroIndex)
+            {
+                localSelectedHeroIndex = -1;
             }
         }
     }
@@ -252,9 +356,23 @@ public class HeroSelectionManager : NetworkBehaviour
                 else
                 {
                     Debug.LogWarning($"[HeroSelectionManager] Client {clientId} tried to confirm without selecting a hero");
+                    NotifyInvalidConfirmationClientRpc(clientId);
                 }
                 break;
             }
+        }
+    }
+    
+    [ClientRpc]
+    private void NotifyInvalidConfirmationClientRpc(ulong clientId)
+    {
+        // Only show notification to the affected player
+        if (clientId == NetworkManager.Singleton.LocalClientId)
+        {
+            Debug.Log("<color=red>You need to select a hero before confirming!</color>");
+            
+            // Reset local ready state
+            localPlayerReady = false;
         }
     }
     
@@ -299,6 +417,20 @@ public class HeroSelectionManager : NetworkBehaviour
             Debug.Log("[HeroSelectionManager] All players are ready! Starting the game...");
             StartGame();
         }
+        else if (readyCount > 0)
+        {
+            // Notify about readiness status
+            NotifyReadinessStatusClientRpc(readyCount, totalPlayers);
+        }
+    }
+    
+    [ClientRpc]
+    private void NotifyReadinessStatusClientRpc(int readyCount, int totalPlayers)
+    {
+        if (IsOwner && !localPlayerReady)
+        {
+            Debug.Log($"<color=yellow>{readyCount} out of {totalPlayers} players are ready</color>");
+        }
     }
     
     private void StartGame()
@@ -308,10 +440,7 @@ public class HeroSelectionManager : NetworkBehaviour
         Debug.Log("[HeroSelectionManager] Starting game with hero selections");
         
         // Stop the timer if it's running
-        if (selectionTimeLimit > 0)
-        {
-            CancelInvoke(nameof(UpdateSelectionTimer));
-        }
+        selectionTimeRemaining.Value = 0;
         
         // Notify clients that the game is starting
         StartGameClientRpc();
@@ -384,11 +513,17 @@ public class HeroSelectionManager : NetworkBehaviour
     // Public getter for hero data
     public HeroData GetHeroData(int index)
     {
-        if (index >= 0 && index < availableHeroes.Length)
+        if (availableHeroes != null && index >= 0 && index < availableHeroes.Length)
         {
             return availableHeroes[index];
         }
         return null;
+    }
+    
+    // Public getter for time remaining
+    public float GetTimeRemaining()
+    {
+        return selectionTimeRemaining.Value;
     }
     
     // Structure to track player hero selections in the NetworkList
