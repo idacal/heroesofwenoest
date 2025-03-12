@@ -65,11 +65,7 @@ public class NetworkManagerExtension : MonoBehaviour
         {
             // Hide connection panel - the hero selection UI will be shown
             // by the HeroSelectionManager when it spawns
-            if (connectionPanel != null)
-            {
-                // Don't hide immediately - wait a moment to ensure the HeroSelectionManager is spawned
-                Invoke(nameof(HideConnectionPanel), 0.5f);
-            }
+            HideConnectionPanel();
         }
     }
     
@@ -77,7 +73,48 @@ public class NetworkManagerExtension : MonoBehaviour
     {
         if (connectionPanel != null)
         {
+            Debug.Log("[NetworkManagerExtension] Hiding connection panel");
             connectionPanel.SetActive(false);
+            
+            // Force the connection panel to stay hidden by setting it inactive in the next frame
+            StartCoroutine(EnsureConnectionPanelHidden());
+        }
+        else
+        {
+            Debug.LogWarning("[NetworkManagerExtension] Connection panel reference is null!");
+            
+            // Try to find connection panel by name if reference is missing
+            GameObject panel = GameObject.Find("ConnectionPanel");
+            if (panel != null)
+            {
+                Debug.Log("[NetworkManagerExtension] Found connection panel by name, hiding it");
+                panel.SetActive(false);
+            }
+        }
+    }
+    
+    // New method to ensure connection panel stays hidden
+    private System.Collections.IEnumerator EnsureConnectionPanelHidden()
+    {
+        // Wait for end of frame
+        yield return new WaitForEndOfFrame();
+        
+        // Hide the panel again
+        if (connectionPanel != null && connectionPanel.activeSelf)
+        {
+            Debug.Log("[NetworkManagerExtension] Connection panel was reactivated, hiding it again");
+            connectionPanel.SetActive(false);
+        }
+        
+        // Also try to find any panels by tag
+        GameObject[] connectionPanels = GameObject.FindGameObjectsWithTag("ConnectionPanel");
+        foreach (var panel in connectionPanels)
+        {
+            if (panel.activeSelf)
+            {
+                Debug.Log($"[NetworkManagerExtension] Found active connection panel with tag: {panel.name}, hiding it");
+                panel.SetActive(false);
+            }
         }
     }
     
@@ -88,11 +125,8 @@ public class NetworkManagerExtension : MonoBehaviour
         {
             Debug.Log("[NetworkManagerExtension] StartHostWithHeroSelection called");
             
-            // Hide connection panel
-            if (connectionPanel != null)
-            {
-                connectionPanel.SetActive(false);
-            }
+            // CRITICAL: Hide connection panel FIRST
+            HideConnectionPanel();
             
             // IMPORTANT: First find and set hero selection mode BEFORE starting host
             MOBAGameManager gameManager = FindObjectOfType<MOBAGameManager>();
@@ -110,12 +144,23 @@ public class NetworkManagerExtension : MonoBehaviour
             Debug.Log("[NetworkManagerExtension] Starting host...");
             networkManager.StartHost();
             
+            // Make sure connection panel is hidden again
+            HideConnectionPanel();
+            
             // Show hero selection UI
             if (heroSelectionUI != null)
             {
                 Debug.Log("[NetworkManagerExtension] Showing hero selection UI");
                 heroSelectionUI.gameObject.SetActive(true);
                 heroSelectionUI.Show();
+                
+                // Set sorting order higher than connection panel
+                Canvas heroSelectionCanvas = heroSelectionUI.GetComponentInParent<Canvas>();
+                if (heroSelectionCanvas != null)
+                {
+                    heroSelectionCanvas.sortingOrder = 100; // Higher value = in front
+                    Debug.Log($"[NetworkManagerExtension] Set hero selection canvas sorting order to {heroSelectionCanvas.sortingOrder}");
+                }
             }
             else
             {
@@ -131,14 +176,14 @@ public class NetworkManagerExtension : MonoBehaviour
         {
             Debug.Log("[NetworkManagerExtension] StartClientWithHeroSelection called");
             
-            // Hide connection panel
-            if (connectionPanel != null)
-            {
-                connectionPanel.SetActive(false);
-            }
+            // Hide connection panel FIRST
+            HideConnectionPanel();
             
             // Start client as normal
             networkManager.StartClient();
+            
+            // Make sure connection panel is hidden again
+            HideConnectionPanel();
             
             Debug.Log("[NetworkManagerExtension] Client started with hero selection phase");
         }

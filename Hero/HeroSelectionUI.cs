@@ -2,8 +2,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using Unity.Netcode;
-using System.Collections.Generic;
 using System.Collections;
+using System.Collections.Generic;
 
 public class HeroSelectionUI : MonoBehaviour
 {
@@ -12,16 +12,16 @@ public class HeroSelectionUI : MonoBehaviour
     [SerializeField] private Button[] heroButtons;
     [SerializeField] private Button readyButton;
     [SerializeField] private TextMeshProUGUI selectionInfoText;
-    [SerializeField] private TextMeshProUGUI timerText; // Añadido para mostrar el temporizador
+    [SerializeField] private TextMeshProUGUI timerText;
     
     [Header("Hero Info Panel")]
     [SerializeField] private GameObject heroInfoPanel;
     [SerializeField] private Image heroPortrait;
     [SerializeField] private TextMeshProUGUI heroNameText;
     [SerializeField] private TextMeshProUGUI heroDescriptionText;
-    [SerializeField] private Image[] abilityIcons; // Q, W, E, R ability icons
-    [SerializeField] private TextMeshProUGUI[] abilityNames; // Names for each ability
-    [SerializeField] private TextMeshProUGUI[] abilityDescriptions; // Descriptions for each ability
+    [SerializeField] private Image[] abilityIcons;
+    [SerializeField] private TextMeshProUGUI[] abilityNames;
+    [SerializeField] private TextMeshProUGUI[] abilityDescriptions;
     
     [Header("Player Selection Indicators")]
     [SerializeField] private Transform playerSelectionsContainer;
@@ -31,7 +31,7 @@ public class HeroSelectionUI : MonoBehaviour
     [SerializeField] private Color normalButtonColor = Color.white;
     [SerializeField] private Color selectedButtonColor = new Color(0.8f, 0.8f, 1f);
     [SerializeField] private Color disabledButtonColor = new Color(0.5f, 0.5f, 0.5f);
-    [SerializeField] private GameObject selectionHighlight; // Visual highlight for selected hero
+    [SerializeField] private GameObject selectionHighlight;
     
     // Reference to the hero selection manager
     private HeroSelectionManager heroSelectionManager;
@@ -42,8 +42,12 @@ public class HeroSelectionUI : MonoBehaviour
     // Track player selection indicators by client ID
     private Dictionary<ulong, GameObject> playerSelectionIndicators = new Dictionary<ulong, GameObject>();
     
-    // Nueva variable para rastrear si el panel se ha mostrado correctamente
+    // Variable para rastrear si el panel se ha mostrado correctamente
     private bool hasInitialized = false;
+    
+    // Contador para reintentos
+    private int initRetries = 0;
+    private const int MAX_RETRIES = 3;
     
     private void Awake()
     {
@@ -81,6 +85,35 @@ public class HeroSelectionUI : MonoBehaviour
         }
     }
     
+    private void OnEnable()
+    {
+        // Make sure canvas is properly configured when enabled
+        EnsureProperCanvasSetup();
+    }
+    
+    private void EnsureProperCanvasSetup()
+    {
+        // Get parent canvas and ensure it has proper sorting order
+        Canvas parentCanvas = GetComponentInParent<Canvas>();
+        if (parentCanvas != null)
+        {
+            // Set a high sorting order to ensure this canvas is on top
+            parentCanvas.sortingOrder = 100;
+            Debug.Log($"[HeroSelectionUI] Canvas sorting order set to {parentCanvas.sortingOrder}");
+            
+            // Ensure it has a graphic raycaster
+            GraphicRaycaster raycaster = parentCanvas.GetComponent<GraphicRaycaster>();
+            if (raycaster == null)
+            {
+                raycaster = parentCanvas.gameObject.AddComponent<GraphicRaycaster>();
+                Debug.Log("[HeroSelectionUI] Added GraphicRaycaster to Canvas");
+            }
+            
+            // Make sure the raycaster is enabled
+            raycaster.enabled = true;
+        }
+    }
+    
     private void ValidateComponents()
     {
         // Verificar que el Canvas tiene un GraphicRaycaster
@@ -91,8 +124,15 @@ public class HeroSelectionUI : MonoBehaviour
             if (raycaster == null)
             {
                 Debug.LogError("[HeroSelectionUI] Canvas doesn't have a GraphicRaycaster! Adding one...");
-                canvas.gameObject.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+                raycaster = canvas.gameObject.AddComponent<UnityEngine.UI.GraphicRaycaster>();
             }
+            
+            // Ensure the raycaster is enabled
+            raycaster.enabled = true;
+            
+            // Set canvas to front
+            canvas.sortingOrder = 100;
+            Debug.Log($"[HeroSelectionUI] Canvas sorting order set to {canvas.sortingOrder}");
             
             // Verificar que el Canvas está en modo correcto
             if (canvas.renderMode != RenderMode.ScreenSpaceOverlay && canvas.renderMode != RenderMode.ScreenSpaceCamera)
@@ -151,6 +191,12 @@ public class HeroSelectionUI : MonoBehaviour
     {
         Debug.Log("[HeroSelectionUI] Start called");
         
+        // Hide all connection panels first
+        HideAllConnectionPanels();
+        
+        // Ensure our canvas is properly configured
+        EnsureProperCanvasSetup();
+        
         // Intentar encontrar el HeroSelectionManager de nuevo si no lo hemos encontrado
         if (heroSelectionManager == null)
         {
@@ -171,6 +217,29 @@ public class HeroSelectionUI : MonoBehaviour
         
         // Iniciar la actualización del temporizador
         StartCoroutine(UpdateSelectionTimer());
+    }
+    
+    private void HideAllConnectionPanels()
+    {
+        // Try finding any connection panels by tag
+        GameObject[] connectionPanels = GameObject.FindGameObjectsWithTag("ConnectionPanel");
+        foreach (var panel in connectionPanels)
+        {
+            Debug.Log($"[HeroSelectionUI] Found connection panel by tag: {panel.name}, hiding it");
+            panel.SetActive(false);
+        }
+        
+        // Try finding common connection panel names
+        string[] possibleNames = { "ConnectionPanel", "NetworkUI", "ConnectionUI", "NetworkPanel" };
+        foreach (string name in possibleNames)
+        {
+            GameObject panel = GameObject.Find(name);
+            if (panel != null)
+            {
+                Debug.Log($"[HeroSelectionUI] Found connection panel by name: {panel.name}, hiding it");
+                panel.SetActive(false);
+            }
+        }
     }
     
     private IEnumerator UpdateSelectionTimer()
@@ -308,6 +377,12 @@ public class HeroSelectionUI : MonoBehaviour
             {
                 buttonImage.sprite = heroData.portrait;
                 buttonImage.preserveAspect = true;
+            }
+            
+            // Make sure raycast target is enabled
+            if (buttonImage != null)
+            {
+                buttonImage.raycastTarget = true;
             }
             
             // Hacer el botón interactivo
@@ -531,6 +606,12 @@ public class HeroSelectionUI : MonoBehaviour
     {
         Debug.Log("[HeroSelectionUI] Show() called");
         
+        // Hide all connection panels first
+        HideAllConnectionPanels();
+        
+        // Ensure proper canvas setup for interactivity
+        EnsureProperCanvasSetup();
+        
         // Verificar que tenemos todos los componentes necesarios
         ValidateComponents();
         
@@ -586,6 +667,9 @@ public class HeroSelectionUI : MonoBehaviour
                 if (buttonImage != null)
                 {
                     buttonImage.color = normalButtonColor;
+                    
+                    // Ensure raycast target is enabled
+                    buttonImage.raycastTarget = true;
                 }
             }
             else
@@ -604,6 +688,24 @@ public class HeroSelectionUI : MonoBehaviour
         UpdateHeroSelectionUI(-1);
         
         Debug.Log("[HeroSelectionUI] UI initialized and shown");
+        
+        // Schedule a check after a short delay in case canvas settings need to settle
+        StartCoroutine(DelayedCanvasCheck());
+    }
+    
+    private IEnumerator DelayedCanvasCheck()
+    {
+        yield return new WaitForSeconds(0.2f);
+        
+        // Re-check canvas and connection panels
+        EnsureProperCanvasSetup();
+        HideAllConnectionPanels();
+        
+        // Check if buttons are interactive - add debug sphere to test raycasting
+        GameObject testSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        testSphere.transform.position = new Vector3(0, 0, 100);
+        testSphere.transform.localScale = new Vector3(0.1f, 0.1f, 0.1f);
+        Destroy(testSphere, 5f);
     }
     
     private IEnumerator DebugButtonsInteractivity()
@@ -623,6 +725,9 @@ public class HeroSelectionUI : MonoBehaviour
                 if (buttonImage != null)
                 {
                     Debug.Log($"[HeroSelectionUI] Hero button {i} has Image component with raycastTarget: {buttonImage.raycastTarget}");
+                    
+                    // Force raycast target to be enabled
+                    buttonImage.raycastTarget = true;
                 }
             }
         }
@@ -635,10 +740,16 @@ public class HeroSelectionUI : MonoBehaviour
             if (raycaster != null)
             {
                 Debug.Log($"[HeroSelectionUI] Canvas has GraphicRaycaster: {raycaster.enabled}");
+                
+                // Force raycaster to be enabled
+                raycaster.enabled = true;
             }
             
             Debug.Log($"[HeroSelectionUI] Canvas render mode: {canvas.renderMode}");
         }
+        
+        // Force a redraw of the canvas
+        Canvas.ForceUpdateCanvases();
     }
     
     public void Hide()
