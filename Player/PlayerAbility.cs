@@ -77,17 +77,31 @@ public class PlayerAbility : NetworkBehaviour
 
     private void Start()
     {
+        Debug.Log("[PlayerAbility] Iniciando componente PlayerAbility...");
+        
+        if (abilities == null || abilities.Length != 4)
+        {
+            Debug.LogWarning("[PlayerAbility] Array de habilidades no inicializado correctamente. Inicializando...");
+            InitializeAbilities();
+        }
+        
         playerStats = GetComponent<PlayerStats>();
+        if (playerStats == null)
+        {
+            Debug.LogError("[PlayerAbility] No se encontró PlayerStats");
+            playerStats = gameObject.AddComponent<PlayerStats>();
+        }
         
         // Crear e inicializar el controlador de habilidades
         abilityController = GetComponent<PlayerAbilityController>();
         if (abilityController == null)
         {
+            Debug.LogWarning("[PlayerAbility] No se encontró PlayerAbilityController. Agregando uno...");
             abilityController = gameObject.AddComponent<PlayerAbilityController>();
         }
         
         // Pasar referencias al controlador
-        if (clickIndicatorPrefab != null)
+        if (clickIndicatorPrefab != null && abilityController != null)
         {
             abilityController.clickIndicatorPrefab = clickIndicatorPrefab;
         }
@@ -99,7 +113,7 @@ public class PlayerAbility : NetworkBehaviour
     private IEnumerator SyncWithNewSystem()
     {
         // Esperar un pequeño tiempo para que todas las inicializaciones de red ocurran
-        yield return new WaitForSeconds(0.2f);
+        yield return new WaitForSeconds(0.5f);
         
         // Obtener referencias a las habilidades específicas
         dashAbility = GetComponent<DashAbility>();
@@ -131,8 +145,82 @@ public class PlayerAbility : NetworkBehaviour
         // Sincronizar información de habilidades con el nuevo sistema
         SyncAbilityInfo();
         
+        // Verificar la inicialización completa
+        StartCoroutine(VerifyInitialization());
+        
         // Seguir actualizando los estados
         StartCoroutine(UpdateAbilityStates());
+    }
+    
+    private IEnumerator VerifyInitialization()
+    {
+        yield return new WaitForSeconds(1.0f);
+        
+        Debug.Log("[PlayerAbility] Verificando inicialización completa...");
+        
+        // Verificar si tenemos habilidades registradas
+        BaseAbility[] allAbilities = GetComponents<BaseAbility>();
+        Debug.Log($"[PlayerAbility] Componentes BaseAbility encontrados: {allAbilities.Length}");
+        
+        // Si no hay habilidades, intentar requerir la inicialización
+        if (allAbilities.Length == 0)
+        {
+            Debug.LogWarning("[PlayerAbility] No se encontraron habilidades. Solicitando inicialización...");
+            
+            // Intentar obtener Hero y pedir inicialización
+            Hero heroComponent = GetComponent<Hero>();
+            if (heroComponent != null)
+            {
+                Debug.Log("[PlayerAbility] Solicitando inicialización de habilidades al componente Hero...");
+                heroComponent.InitializeHeroAbilities();
+            }
+            else
+            {
+                Debug.LogError("[PlayerAbility] No se encontró componente Hero. No se pueden inicializar habilidades específicas.");
+                
+                // Como último recurso, intentar inicializar habilidades predeterminadas
+                if (abilityController != null)
+                {
+                    Debug.Log("[PlayerAbility] Solicitando inicialización de habilidades por defecto...");
+                    abilityController.SendMessage("InitializeDefaultAbilities", SendMessageOptions.DontRequireReceiver);
+                }
+            }
+        }
+        
+        // Verificar de nuevo después de intentar inicialización
+        yield return new WaitForSeconds(0.5f);
+        allAbilities = GetComponents<BaseAbility>();
+        Debug.Log($"[PlayerAbility] Después de reintentar: {allAbilities.Length} habilidades encontradas");
+        
+        // Si tenemos habilidades pero no están en nuestro sistema, registrarlas
+        if (allAbilities.Length > 0)
+        {
+            Debug.Log("[PlayerAbility] Registrando habilidades encontradas en componentes...");
+            
+            foreach (var ability in allAbilities)
+            {
+                if (ability is DashAbility)
+                {
+                    RegisterPowerUpAbility(ability, 0);
+                }
+                else if (ability is StrongJumpAbility)
+                {
+                    RegisterPowerUpAbility(ability, 1);
+                }
+                else if (ability is KineticShieldAbility)
+                {
+                    RegisterPowerUpAbility(ability, 2);
+                }
+                else if (ability is SupersonicMissileAbility)
+                {
+                    RegisterPowerUpAbility(ability, 3);
+                }
+                else if (ability is ShieldAbility)
+                {
+                    RegisterPowerUpAbility(ability, 2);
+                }
+            }
+        }
     }
     
     private IEnumerator UpdateAbilityStates()
@@ -267,67 +355,109 @@ public class PlayerAbility : NetworkBehaviour
         }
     }
     
-    // NUEVO MÉTODO: Registra una habilidad adquirida por powerup en el sistema
-        // Enhance the RegisterPowerUpAbility method to provide more debug information
-public void RegisterPowerUpAbility(BaseAbility ability, int slot)
-{
-    if (slot < 2 || slot >= 4)
+    // Método mejorado para registrar habilidades
+    public void RegisterPowerUpAbility(BaseAbility ability, int slot)
     {
-        Debug.LogError($"[PlayerAbility] Invalid slot for power-up ability: {slot}. Must be 2 or 3.");
-        return;
-    }
-    
-    int powerUpIndex = slot - 2;
-    
-    // If there's already an ability in this slot, note it (no need to clean up)
-    if (powerUpAbilities[powerUpIndex] != null && powerUpAbilities[powerUpIndex] != ability)
-    {
-        Debug.Log($"[PlayerAbility] Replacing existing ability {powerUpAbilities[powerUpIndex].abilityName} in slot {slot}");
-    }
-    
-    powerUpAbilities[powerUpIndex] = ability;
-    
-    // Store specific ability references based on type
-    if (ability is KineticShieldAbility)
-    {
-        kineticShieldAbility = ability as KineticShieldAbility;
-        Debug.Log("[PlayerAbility] KineticShieldAbility stored in direct reference");
-    }
-    else if (ability is SupersonicMissileAbility)
-    {
-        missileAbility = ability as SupersonicMissileAbility;
-        Debug.Log("[PlayerAbility] SupersonicMissileAbility stored in direct reference");
-    }
-    else if (ability is ShieldAbility)
-    {
-        shieldAbility = ability as ShieldAbility;
-        Debug.Log("[PlayerAbility] ShieldAbility stored in direct reference");
-    }
-    
-    // If we have the abilities array, update it directly
-    if (abilities != null && abilities.Length > slot && abilities[slot] != null)
-    {
-        // Copy ability data to the abilities array for UI
-        abilities[slot].name = ability.abilityName;
-        abilities[slot].activationKey = ability.activationKey;
-        abilities[slot].manaCost = ability.manaCost;
-        abilities[slot].cooldown = ability.cooldown;
-        abilities[slot].icon = ability.icon;
-        abilities[slot].isReady = ability.isReady;
-        abilities[slot].cooldownEndTime = Time.time + ability.GetRemainingCooldown();
+        // Añadir validación adicional y manejo de errores
+        if (ability == null)
+        {
+            Debug.LogError($"[PlayerAbility] Error: Intento de registrar una habilidad NULL en slot {slot}");
+            return;
+        }
+
+        // Validar el slot
+        if (slot < 0 || slot >= 4)
+        {
+            Debug.LogError($"[PlayerAbility] Slot inválido para habilidad: {slot}. Debe estar entre 0 y 3.");
+            return;
+        }
         
-        Debug.Log($"[PlayerAbility] Updated ability data in slot {slot}: {abilities[slot].name}, Key: {abilities[slot].activationKey}");
+        Debug.Log($"[PlayerAbility] Registrando habilidad {ability.abilityName} en slot {slot}");
+        
+        // Si es una de las primeras dos habilidades básicas (0 o 1), usar el array directo
+        if (slot < 2)
+        {
+            // Guardar referencia específica para esas habilidades
+            if (slot == 0 && ability is DashAbility)
+            {
+                dashAbility = ability as DashAbility;
+                Debug.Log("[PlayerAbility] DashAbility guardada en referencia directa (slot 0)");
+            }
+            else if (slot == 1 && ability is StrongJumpAbility)
+            {
+                strongJumpAbility = ability as StrongJumpAbility;
+                Debug.Log("[PlayerAbility] StrongJumpAbility guardada en referencia directa (slot 1)");
+            }
+        }
+        else
+        {
+            // Para slots 2 y 3, usar el array de powerUpAbilities
+            int powerUpIndex = slot - 2;
+            
+            // Si ya hay una habilidad en este slot, registrarla
+            if (powerUpAbilities[powerUpIndex] != null && powerUpAbilities[powerUpIndex] != ability)
+            {
+                Debug.Log($"[PlayerAbility] Reemplazando habilidad existente {powerUpAbilities[powerUpIndex].abilityName} en slot {slot}");
+            }
+            
+            powerUpAbilities[powerUpIndex] = ability;
+            
+            // Guardar referencias específicas para ciertos tipos
+            if (ability is KineticShieldAbility)
+            {
+                kineticShieldAbility = ability as KineticShieldAbility;
+                Debug.Log("[PlayerAbility] KineticShieldAbility guardada en referencia directa");
+            }
+            else if (ability is SupersonicMissileAbility)
+            {
+                missileAbility = ability as SupersonicMissileAbility;
+                Debug.Log("[PlayerAbility] SupersonicMissileAbility guardada en referencia directa");
+            }
+            else if (ability is ShieldAbility)
+            {
+                shieldAbility = ability as ShieldAbility;
+                Debug.Log("[PlayerAbility] ShieldAbility guardada en referencia directa");
+            }
+        }
+        
+        // Verificar si el array de abilities existe y actualizarlo
+        if (abilities == null)
+        {
+            Debug.LogError("[PlayerAbility] El array de abilities es null. Inicializándolo...");
+            InitializeAbilities();
+        }
+        
+        // Si tenemos el array de abilities, actualizar los datos
+        if (abilities != null && abilities.Length > slot && abilities[slot] != null)
+        {
+            // Copiar datos de la habilidad al array para la UI
+            abilities[slot].name = ability.abilityName;
+            abilities[slot].activationKey = ability.activationKey;
+            abilities[slot].manaCost = ability.manaCost;
+            abilities[slot].cooldown = ability.cooldown;
+            abilities[slot].icon = ability.icon;
+            abilities[slot].isReady = ability.isReady;
+            abilities[slot].cooldownEndTime = Time.time + ability.GetRemainingCooldown();
+            
+            Debug.Log($"[PlayerAbility] Actualizada información de habilidad en slot {slot}: {abilities[slot].name}, Tecla: {abilities[slot].activationKey}");
+        }
+        else
+        {
+            Debug.LogError($"[PlayerAbility] No se pudo actualizar datos de habilidad en slot {slot} - array de abilities no configurado correctamente");
+            // Intentar arreglar el array
+            if (abilities == null || abilities.Length < 4)
+            {
+                InitializeAbilities();
+                RegisterPowerUpAbility(ability, slot); // Intentar de nuevo
+                return;
+            }
+        }
+        
+        // Hacer una sincronización inmediata
+        SyncPowerUpAbilities();
+        
+        Debug.Log($"[PlayerAbility] Habilidad {ability.abilityName} registrada en slot {slot}");
     }
-    else
-    {
-        Debug.LogWarning($"[PlayerAbility] Could not update ability data in slot {slot} - abilities array not properly configured");
-    }
-    
-    // Make a synchronization immediately
-    SyncPowerUpAbilities();
-    
-    Debug.Log($"[PlayerAbility] Ability {ability.abilityName} registered in slot {slot}");
-}
     
     // NUEVO MÉTODO: Desregistra una habilidad de powerup
     public void UnregisterPowerUpAbility(int slot)
@@ -427,5 +557,4 @@ public void RegisterPowerUpAbility(BaseAbility ability, int slot)
         }
         return 0f;
     }
-
 }

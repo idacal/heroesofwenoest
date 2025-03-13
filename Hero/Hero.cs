@@ -124,26 +124,26 @@ public class Hero : NetworkBehaviour
     }
     
     // NUEVO: Método virtual para inicializar habilidades de héroe
-public virtual void InitializeHeroAbilities()
-{
-    Debug.Log($"[Hero] Initializing abilities for {heroName}");
-    
-    // Get the ability controller
-    abilityController = GetComponent<PlayerAbilityController>();
-    if (abilityController == null)
+    public virtual void InitializeHeroAbilities()
     {
-        Debug.LogError("[Hero] No PlayerAbilityController found!");
-        return;
+        Debug.Log($"[Hero] Initializing abilities for {heroName}");
+        
+        // Get the ability controller
+        abilityController = GetComponent<PlayerAbilityController>();
+        if (abilityController == null)
+        {
+            Debug.LogError("[Hero] No PlayerAbilityController found!");
+            return;
+        }
+        
+        // Clear any existing abilities first
+        abilityController.RemoveAllAbilities();
+        
+        // In the base class, we don't add specific abilities
+        // Derived hero classes will override this method to add their specific abilities
+        
+        Debug.Log($"[Hero] Base initialization complete for {heroName}. Abilities will be added in derived classes.");
     }
-    
-    // Clear any existing abilities first
-    abilityController.RemoveAllAbilities();
-    
-    // In the base class, we don't add specific abilities
-    // Derived hero classes will override this method to add their specific abilities
-    
-    Debug.Log($"[Hero] Base initialization complete for {heroName}. Abilities will be added in derived classes.");
-}
     
     // This method can be called when the hero's abilities should be activated based on game state
     public virtual void ActivateHeroAbilities()

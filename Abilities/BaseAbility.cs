@@ -21,8 +21,8 @@ public abstract class BaseAbility : MonoBehaviour
     protected PlayerStats playerStats;
     protected PlayerNetwork playerNetwork;
     protected NetworkBehaviour networkOwner;
-    protected CharacterController characterController;
-    protected Rigidbody rb;
+    protected CharacterController characterController; // Definido aquí
+    protected Rigidbody rb; // Definido aquí
     
     // Inicialización
     public virtual void Initialize(NetworkBehaviour owner)
@@ -37,7 +37,7 @@ public abstract class BaseAbility : MonoBehaviour
     // Método para activar la habilidad
     public virtual bool CanActivate()
     {
-        return isReady && playerStats.CurrentMana >= manaCost;
+        return isReady && playerStats != null && playerStats.CurrentMana >= manaCost;
     }
     
     // Método que se llama cuando se activa la habilidad
@@ -49,7 +49,7 @@ public abstract class BaseAbility : MonoBehaviour
     // Método que se llama cuando la habilidad falla (ej: maná insuficiente)
     public virtual void OnFailed()
     {
-        if (networkOwner.IsOwner)
+        if (networkOwner != null && networkOwner.IsOwner)
         {
             Debug.Log($"No tienes suficiente maná para usar {abilityName}");
         }
@@ -61,7 +61,7 @@ public abstract class BaseAbility : MonoBehaviour
         isReady = false;
         cooldownEndTime = Time.time + cooldown;
         
-        if (networkOwner.IsOwner)
+        if (networkOwner != null && networkOwner.IsOwner)
         {
             Debug.Log($"Habilidad {abilityName} en cooldown por {cooldown} segundos");
         }
@@ -70,7 +70,7 @@ public abstract class BaseAbility : MonoBehaviour
         
         isReady = true;
         
-        if (networkOwner.IsOwner)
+        if (networkOwner != null && networkOwner.IsOwner)
         {
             Debug.Log($"Habilidad {abilityName} lista para usar");
         }

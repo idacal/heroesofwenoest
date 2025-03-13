@@ -11,8 +11,8 @@ public class HeroSelectionManager : NetworkBehaviour
     [SerializeField] private GameObject connectionPanel; // Reference to hide connection UI during selection
     
     [Header("Hero Data")]
-    [SerializeField] private HeroData[] availableHeroes;
-    [SerializeField] private GameObject defaultPlayerPrefab; // Added default player prefab reference
+    [SerializeField] private HeroDefinition[] availableHeroes; // Cambiado de HeroData[] a HeroDefinition[]
+    [SerializeField] private GameObject basePlayerPrefab; // Renombrado de defaultPlayerPrefab
     
     [Header("Settings")]
     [SerializeField] private float selectionTimeLimit = 30f; // Optional time limit for selection
@@ -276,7 +276,6 @@ public class HeroSelectionManager : NetworkBehaviour
     {
         if (!IsClient || localSelectedHeroIndex < 0) return;
         
-        // AÑADIR ESTOS LOGS DE DIAGNÓSTICO
         Debug.Log($"[HeroSelectionManager] Confirmando selección de héroe: índice={localSelectedHeroIndex}");
         
         if (availableHeroes != null && localSelectedHeroIndex < availableHeroes.Length)
@@ -539,13 +538,20 @@ public class HeroSelectionManager : NetworkBehaviour
         }
     }
     
-    // Public getter for hero data
-    public HeroData GetHeroData(int index)
+    // Public getter for hero data - cambiado para que trabaje con HeroDefinition
+    public HeroDefinition GetHeroDefinition(int index)
     {
         if (availableHeroes != null && index >= 0 && index < availableHeroes.Length)
         {
             return availableHeroes[index];
         }
+        return null;
+    }
+    
+    // Método de compatibilidad para código antiguo
+    public HeroData GetHeroData(int index)
+    {
+        Debug.LogWarning("[HeroSelectionManager] GetHeroData is deprecated, use GetHeroDefinition instead");
         return null;
     }
     
@@ -612,19 +618,7 @@ public class HeroSelectionManager : NetworkBehaviour
         }
     }
     
-    // Added method for handling player connections after hero selection
-    private void OnPlayerConnected(ulong clientId)
-    {
-        Debug.Log($"[HeroSelectionManager] New player connected with ID: {clientId}");
-        
-        // If hero selection phase is complete, spawn with selected hero
-        if (playerHeroSelections.Count > 0)
-        {
-            SpawnPlayerWithSelectedHero(clientId);
-        }
-    }
-    
-    // Added method for spawning player with selected hero
+    // Modified method for spawning player with selected hero
     private void SpawnPlayerWithSelectedHero(ulong clientId)
     {
         Debug.Log($"[HeroSelectionManager] Spawning player {clientId} with selected hero");
@@ -637,18 +631,18 @@ public class HeroSelectionManager : NetworkBehaviour
             // Check if the hero index is valid
             if (heroIndex >= 0 && heroIndex < availableHeroes.Length)
             {
-                // Get the hero data
-                HeroData heroData = availableHeroes[heroIndex];
+                // Get the hero definition
+                HeroDefinition heroDefinition = availableHeroes[heroIndex];
                 
-                // Return hero prefab if it exists
-                if (heroData != null && heroData.heroPrefab != null)
+                if (heroDefinition != null)
                 {
-                    Debug.Log($"[HeroSelectionManager] Using hero prefab for client {clientId}: {heroData.heroName}");
-                    // Logic for spawning would go here
+                    Debug.Log($"[HeroSelectionManager] Using hero definition for client {clientId}: {heroDefinition.heroName}");
+                    // En la nueva arquitectura, el GameManager se encarga de instanciar el basePlayerPrefab
+                    // y configurar el componente Hero con la definición
                 }
                 else
                 {
-                    Debug.LogError($"[HeroSelectionManager] Hero data is null or prefab is not assigned for index {heroIndex}");
+                    Debug.LogError($"[HeroSelectionManager] Hero definition is null for index {heroIndex}");
                 }
             }
             else
@@ -662,31 +656,11 @@ public class HeroSelectionManager : NetworkBehaviour
         }
     }
     
-    // Method to get hero prefab for player
-    private GameObject GetHeroPrefabForPlayer(ulong clientId)
+    // Updated method to get hero prefab for player
+    private GameObject GetBasePlayerPrefab()
     {
-        // Check if this player has a hero selection
-        if (playerHeroSelections.TryGetValue(clientId, out int heroIndex))
-        {
-            Debug.Log($"[HeroSelectionManager] Client {clientId} selected hero with index {heroIndex}");
-            
-            // Check if the hero index is valid
-            if (heroIndex >= 0 && heroIndex < availableHeroes.Length)
-            {
-                // Get the hero data
-                HeroData heroData = availableHeroes[heroIndex];
-                
-                // Return hero prefab if it exists
-                if (heroData != null && heroData.heroPrefab != null)
-                {
-                    Debug.Log($"[HeroSelectionManager] Using hero prefab for client {clientId}: {heroData.heroName}");
-                    return heroData.heroPrefab;
-                }
-            }
-        }
-        
-        // Fallback to default player prefab
-        Debug.LogWarning($"[HeroSelectionManager] Using default player prefab for client {clientId}");
-        return defaultPlayerPrefab;
+        // En la nueva arquitectura, siempre devolvemos el mismo prefab base
+        // y la configuración específica del héroe se realiza a través del componente Hero
+        return basePlayerPrefab;
     }
 }

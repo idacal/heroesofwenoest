@@ -60,41 +60,41 @@ public class DamagerHero : Hero
     
     // NUEVO: Sobrescribe el método de inicialización de habilidades
     public override void InitializeHeroAbilities()
-{
-    Debug.Log($"[DamagerHero] Initializing abilities for {heroName}");
-    
-    // Get the ability controller
-    abilityController = GetComponent<PlayerAbilityController>();
-    if (abilityController == null)
     {
-        Debug.LogError("[DamagerHero] No PlayerAbilityController found!");
-        return;
+        Debug.Log($"[DamagerHero] Initializing abilities for {heroName}");
+        
+        // Get the ability controller
+        abilityController = GetComponent<PlayerAbilityController>();
+        if (abilityController == null)
+        {
+            Debug.LogError("[DamagerHero] No PlayerAbilityController found!");
+            return;
+        }
+        
+        // Clear any existing abilities first
+        abilityController.RemoveAllAbilities();
+        
+        // Add Striker-specific abilities
+        dashAbility = abilityController.AddAbility<DashAbility>();
+        strongJumpAbility = abilityController.AddAbility<StrongJumpAbility>();
+        kineticShieldAbility = abilityController.AddAbility<KineticShieldAbility>();
+        supersonicMissileAbility = abilityController.AddAbility<SupersonicMissileAbility>();
+        
+        // Connect abilities to the PlayerAbility class for UI
+        PlayerAbility playerAbility = GetComponent<PlayerAbility>();
+        if (playerAbility != null)
+        {
+            // Register abilities in the slots that PlayerAbility expects
+            playerAbility.RegisterPowerUpAbility(kineticShieldAbility, 2);  // Slot 2 (E key)
+            playerAbility.RegisterPowerUpAbility(supersonicMissileAbility, 3);  // Slot 3 (R key)
+        }
+        
+        Debug.Log($"[DamagerHero] Successfully initialized abilities for {heroName}: " +
+                  $"Dash: {dashAbility != null}, " +
+                  $"StrongJump: {strongJumpAbility != null}, " +
+                  $"KineticShield: {kineticShieldAbility != null}, " +
+                  $"SupersonicMissile: {supersonicMissileAbility != null}");
     }
-    
-    // Clear any existing abilities first
-    abilityController.RemoveAllAbilities();
-    
-    // Add Striker-specific abilities
-    dashAbility = abilityController.AddAbility<DashAbility>();
-    strongJumpAbility = abilityController.AddAbility<StrongJumpAbility>();
-    kineticShieldAbility = abilityController.AddAbility<KineticShieldAbility>();
-    supersonicMissileAbility = abilityController.AddAbility<SupersonicMissileAbility>();
-    
-    // Connect abilities to the PlayerAbility class for UI
-    PlayerAbility playerAbility = GetComponent<PlayerAbility>();
-    if (playerAbility != null)
-    {
-        // Register abilities in the slots that PlayerAbility expects
-        playerAbility.RegisterPowerUpAbility(kineticShieldAbility, 2);  // Slot 2 (E key)
-        playerAbility.RegisterPowerUpAbility(supersonicMissileAbility, 3);  // Slot 3 (R key)
-    }
-    
-    Debug.Log($"[DamagerHero] Successfully initialized abilities for {heroName}: " +
-              $"Dash: {dashAbility != null}, " +
-              $"StrongJump: {strongJumpAbility != null}, " +
-              $"KineticShield: {kineticShieldAbility != null}, " +
-              $"SupersonicMissile: {supersonicMissileAbility != null}");
-}
     
     private void InitializeHeroServer()
     {
@@ -223,7 +223,7 @@ public class DamagerHero : Hero
         Debug.Log($"{heroName} activates special ability!");
     }
     
-private void OnEnragedStateChanged(bool oldValue, bool newValue)
+    private void OnEnragedStateChanged(bool oldValue, bool newValue)
     {
         // React to the enraged state changing
         if (newValue)

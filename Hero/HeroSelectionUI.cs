@@ -357,7 +357,7 @@ public class HeroSelectionUI : MonoBehaviour
         }
     }
     
-    private void ConfigureHeroButton(Button button, HeroData heroData)
+private void ConfigureHeroButton(Button button, HeroDefinition heroDefinition)
     {
         // Configurar el botón con datos del héroe
         if (button != null && heroData != null)
@@ -367,7 +367,7 @@ public class HeroSelectionUI : MonoBehaviour
             Image buttonImage = button.GetComponentInChildren<Image>();
             
             // Configurar texto si existe
-            if (buttonText != null)
+            if (button != null && heroDefinition != null)
             {
                 buttonText.text = heroData.heroName;
             }
@@ -882,7 +882,7 @@ public class HeroSelectionUI : MonoBehaviour
             }
         }
     }
-    public void UpdateHeroButtonsDisplay(HeroData[] availableHeroes)
+public void UpdateHeroButtonsDisplay(HeroDefinition[] availableHeroes)
 {
     if (heroButtons == null || heroButtons.Length == 0)
     {

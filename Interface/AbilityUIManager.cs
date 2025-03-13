@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
-using PlayerAbilities;
+using PlayerAbilities; // Añadir esta línea para importar BaseAbility
 
 public class AbilityUIManager : MonoBehaviour
 {

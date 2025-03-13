@@ -24,100 +24,60 @@ public class PlayerAbilityController : NetworkBehaviour
     // Cambiado a público para permitir acceso desde otras clases
     public bool isInImpactPause { get; private set; } = false;
     
-    // Abrir acceso público a las habilidades más comunes para consultas rápidas
-    private DashAbility dashAbility;
-    private EarthquakeAbility earthquakeAbility;
-    
     private void Awake()
     {
         playerStats = GetComponent<PlayerStats>();
         characterController = GetComponent<CharacterController>();
         rb = GetComponent<Rigidbody>();
-        
-        if (rb == null && characterController == null)
-        {
-            Debug.LogWarning("No se encontró CharacterController ni Rigidbody. Las habilidades podrían no funcionar correctamente.");
-        }
-    }
-    
-    private void Start()
-    {
-        // Si estamos en multiplayer, esperar a la inicialización de la red
-        if (NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening)
-        {
-            if (IsServer || IsClient)
-            {
-                // Se inicializa en OnNetworkSpawn con un pequeño retraso
-            }
-        }
-        else
-        {
-            // Modo fuera de línea
-            InitializeDefaultAbilities();
-        }
     }
     
     public override void OnNetworkSpawn()
     {
         base.OnNetworkSpawn();
         
-        // Esperar un breve momento para que el NetworkManager esté completamente inicializado
-        StartCoroutine(DelayedInitialization());
-    }
-
-    private IEnumerator DelayedInitialization()
-    {
-        yield return new WaitForSeconds(0.2f);
-        
-        // Verificar si tenemos un componente Hero
+        // Buscar Hero y solicitar inicialización
         Hero heroComponent = GetComponent<Hero>();
         if (heroComponent != null)
         {
-            Debug.Log($"[PlayerAbilityController] Se encontró héroe {heroComponent.heroName}. Usando inicialización específica del héroe.");
-            // Si tenemos un Hero, usamos su método de inicialización específico
-            heroComponent.InitializeHeroAbilities();
+            Debug.Log($"[PlayerAbilityController] OnNetworkSpawn - Delegando inicialización al componente Hero");
+            // Esperar un breve momento para asegurar que todo esté listo
+            StartCoroutine(DelayedInitialization(heroComponent));
         }
         else
         {
-            Debug.Log("[PlayerAbilityController] No se encontró componente Hero. Usando inicialización por defecto.");
-            // Si no hay un Hero, usamos la inicialización por defecto
+            Debug.LogWarning("[PlayerAbilityController] No se encontró Hero - Inicializando con habilidades por defecto");
+            // Inicializar habilidades por defecto
             InitializeDefaultAbilities();
+        }
+    }
+    
+    private IEnumerator DelayedInitialization(Hero heroComponent)
+    {
+        // Esperar un momento para asegurar que todo está listo
+        yield return new WaitForSeconds(0.5f);
+        
+        Debug.Log("[PlayerAbilityController] Iniciando inicialización de habilidades de héroe...");
+        heroComponent.InitializeHeroAbilities();
+        
+        // Verificar si tenemos habilidades
+        yield return new WaitForSeconds(0.5f);
+        if (activeAbilities.Count == 0)
+        {
+            Debug.LogError("[PlayerAbilityController] ¡No se inicializaron habilidades! Reintentando...");
+            heroComponent.InitializeHeroAbilities();
         }
     }
     
     private void InitializeDefaultAbilities()
     {
-        // Limpiar cualquier habilidad existente para evitar duplicados
+        Debug.Log("[PlayerAbilityController] Inicializando habilidades por defecto");
+        
+        // Limpiar cualquier habilidad existente
         RemoveAllAbilities();
         
-        // Buscar primero si tenemos un componente Hero
-        Hero heroComponent = GetComponent<Hero>();
-        if (heroComponent != null)
-        {
-            Debug.Log($"[PlayerAbilityController] Detectado héroe de tipo {heroComponent.GetType().Name}. No se aplicarán habilidades por defecto.");
-            // Si tenemos un Hero, no inicializamos las habilidades por defecto
-            // Permitimos que el sistema de héroes maneje la inicialización
-            return;
-        }
-        
-        // Si no hay un héroe específico, usamos habilidades por defecto
-        Debug.Log("[PlayerAbilityController] No se detectó héroe específico. Aplicando habilidades por defecto.");
-        
-        // Añadir habilidades por defecto solo si no hay un héroe específico
-        dashAbility = AddAbility<DashAbility>();
+        // Añadir habilidades básicas
+        AddAbility<DashAbility>();
         AddAbility<StrongJumpAbility>();
-        
-        // Inicializar explícitamente cada habilidad con este NetworkBehaviour
-        foreach (var ability in activeAbilities)
-        {
-            ability.Initialize(this);
-        }
-        
-        // Notificar que se inicializaron correctamente
-        if (IsOwner)
-        {
-            Debug.Log("[PlayerAbilityController] Habilidades por defecto inicializadas correctamente");
-        }
     }
     
     private void Update()
@@ -130,56 +90,36 @@ public class PlayerAbilityController : NetworkBehaviour
         {
             HandleMouseInput();
         }
-        else
-        {
-            // Si estamos en pausa de impacto, ignorar cualquier entrada de movimiento
-            if (Input.GetMouseButtonDown(1))
-            {
-                // Consumir el evento pero no hacer nada
-                Debug.Log("Movimiento bloqueado durante la pausa de impacto");
-            }
-        }
         
         // Comprobar activación de habilidades
-        foreach (var ability in activeAbilities)
+        for (int i = 0; i < activeAbilities.Count; i++)
         {
+            BaseAbility ability = activeAbilities[i];
+            
+            // Verificar si la habilidad existe
+            if (ability == null)
+            {
+                activeAbilities.RemoveAt(i);
+                i--;
+                continue;
+            }
+            
             // Verificar si se presionó la tecla de activación
             if (Input.GetKeyDown(ability.activationKey))
             {
-                // Verificar si la habilidad se puede activar
                 if (ability.CanActivate())
                 {
-                    Debug.Log($"Activando habilidad {ability.abilityName} a través de la tecla {ability.activationKey}");
-                    UseAbilityServerRpc(activeAbilities.IndexOf(ability));
+                    Debug.Log($"Activando habilidad {ability.abilityName} con tecla {ability.activationKey}");
+                    UseAbilityServerRpc(i);
                 }
                 else if (!ability.isReady)
                 {
-                    Debug.Log($"Habilidad {ability.abilityName} en enfriamiento. Tiempo restante: {ability.GetRemainingCooldown()} segundos");
+                    Debug.Log($"Habilidad {ability.abilityName} en cooldown: {ability.GetRemainingCooldown()} segundos");
                 }
                 else if (playerStats.CurrentMana < ability.manaCost)
                 {
                     ability.OnFailed();
                     Debug.Log($"Maná insuficiente para {ability.abilityName}. Necesitas {ability.manaCost}, tienes {playerStats.CurrentMana}");
-                }
-                else
-                {
-                    // NUEVO: Verificar si es el Earthquake para mostrar feedback sobre requisito de movimiento
-                    if (ability is EarthquakeAbility earthquakeAbility)
-                    {
-                        if (!earthquakeAbility.IsMovingFastEnough())
-                        {
-                            // Mostrar feedback específico para requisito de movimiento
-                            Debug.Log($"¡Necesitas estar en movimiento para usar {ability.abilityName}!");
-                            
-                            // Opcional: Efecto visual o sonoro para indicar el requisito
-                            ShowRequirementFeedback("Muévete para usar Terremoto");
-                        }
-                    }
-                    else
-                    {
-                        // Otro tipo de fallo no específico
-                        Debug.Log($"No se puede activar {ability.abilityName} por razones desconocidas");
-                    }
                 }
             }
             
@@ -187,39 +127,11 @@ public class PlayerAbilityController : NetworkBehaviour
             ability.UpdateAbility();
         }
         
-        // Si estamos en movimiento y no hay ningún estado especial activo
-        if (isMoving && !isInImpactPause && !IsPerformingAnyAbility())
+        // Manejar movimiento hacia posición objetivo
+        if (isMoving && !isInImpactPause)
         {
             MoveTowardsTarget();
         }
-    }
-    
-    // NUEVO: Método para mostrar feedback visual o de audio cuando no se cumplen requisitos
-    private void ShowRequirementFeedback(string message)
-    {
-        // Aquí puedes implementar efectos visuales, sonidos, o mensajes en pantalla
-        // Por ejemplo, podrías mostrar un texto flotante cerca del jugador
-        
-        Debug.Log($"[REQUISITO] {message}");
-        
-        // Si tienes un sistema de UI, puedes usarlo para mostrar un mensaje temporal
-        // Por ejemplo:
-        // UIManager.ShowTemporaryMessage(message, 2.0f);
-        
-        // También podrías reproducir un sonido de "error" o "requisito no cumplido"
-        // AudioManager.PlaySound("requirement_not_met");
-    }
-    
-    private bool IsPerformingAnyAbility()
-    {
-        // Verificar si el jugador está ejecutando alguna habilidad que bloquee el movimiento
-        if (dashAbility != null && dashAbility.IsDashing)
-            return true;
-            
-        if (earthquakeAbility != null && (earthquakeAbility.IsJumping || earthquakeAbility.IsFalling))
-            return true;
-            
-        return false;
     }
     
     private void HandleMouseInput()
@@ -274,44 +186,35 @@ public class PlayerAbilityController : NetworkBehaviour
     }
     
     // Métodos para agregar/eliminar habilidades dinámicamente
-    
-public T AddAbility<T>() where T : BaseAbility
-{
-    // Verify if ability already exists
-    foreach (var ability in activeAbilities)
+    public T AddAbility<T>() where T : BaseAbility
     {
-        if (ability is T)
+        // Buscar si ya existe
+        foreach (var ability in activeAbilities)
         {
-            Debug.LogWarning($"The ability {typeof(T).Name} is already added to the player");
-            return ability as T;
+            if (ability is T existingAbility)
+            {
+                Debug.Log($"[PlayerAbilityController] La habilidad {typeof(T).Name} ya existe");
+                return existingAbility as T;
+            }
         }
+        
+        // Crear nueva habilidad
+        T newAbility = gameObject.AddComponent<T>();
+        
+        // Verificar si se creó correctamente
+        if (newAbility == null)
+        {
+            Debug.LogError($"[PlayerAbilityController] Error al crear habilidad {typeof(T).Name}");
+            return null;
+        }
+        
+        // Inicializar la habilidad
+        newAbility.Initialize(this);
+        activeAbilities.Add(newAbility);
+        
+        Debug.Log($"[PlayerAbilityController] Habilidad {typeof(T).Name} añadida correctamente");
+        return newAbility;
     }
-    
-    // Add the new ability and initialize it properly
-    T newAbility = gameObject.AddComponent<T>();
-    
-    // Initialize with the correct NetworkBehaviour owner
-    newAbility.Initialize(this);
-    activeAbilities.Add(newAbility);
-    
-    // Track common abilities by type for quick access
-    if (newAbility is DashAbility dashAbility)
-    {
-        this.dashAbility = dashAbility;
-    }
-    else if (newAbility is EarthquakeAbility earthquakeAbility)
-    {
-        this.earthquakeAbility = earthquakeAbility;
-    }
-    
-    // Log the addition of the ability if we're the owner
-    if (IsOwner)
-    {
-        Debug.Log($"New ability acquired: {newAbility.abilityName}");
-    }
-    
-    return newAbility;
-}
     
     public bool RemoveAbility<T>() where T : BaseAbility
     {
@@ -326,11 +229,6 @@ public T AddAbility<T>() where T : BaseAbility
                 ability.Cleanup();
                 Destroy(ability);
                 
-                if (IsOwner)
-                {
-                    Debug.Log($"Habilidad removida: {ability.abilityName}");
-                }
-                
                 return true;
             }
         }
@@ -338,45 +236,23 @@ public T AddAbility<T>() where T : BaseAbility
         return false;
     }
     
-public void RemoveAllAbilities()
-{
-    // Keep track of which abilities we've already seen to avoid duplicates
-    HashSet<BaseAbility> processedAbilities = new HashSet<BaseAbility>();
-    
-    // First, process all abilities in our activeAbilities list
-    foreach (var ability in activeAbilities)
+    public void RemoveAllAbilities()
     {
-        if (ability != null && !processedAbilities.Contains(ability))
+        // Limpiar todas las habilidades
+        foreach (var ability in GetComponents<BaseAbility>())
         {
-            processedAbilities.Add(ability);
-            ability.Cleanup();
-            Destroy(ability);
+            if (ability != null)
+            {
+                ability.Cleanup();
+                Destroy(ability);
+            }
         }
+        
+        // Limpiar la lista
+        activeAbilities.Clear();
+        
+        Debug.Log("[PlayerAbilityController] Todas las habilidades han sido eliminadas");
     }
-    
-    // Then also look for any abilities that might have been added directly as components
-    // but not registered in our list
-    foreach (var ability in GetComponents<BaseAbility>())
-    {
-        if (ability != null && !processedAbilities.Contains(ability))
-        {
-            processedAbilities.Add(ability);
-            ability.Cleanup();
-            Destroy(ability);
-        }
-    }
-    
-    // Clear the list of active abilities
-    activeAbilities.Clear();
-    
-    // Reset ability references
-    dashAbility = null;
-    earthquakeAbility = null;
-    
-    Debug.Log("[PlayerAbilityController] All abilities have been removed and cleaned up");
-}
-    
-    // Métodos de red
     
     [ServerRpc]
     private void UseAbilityServerRpc(int abilityIndex)
@@ -453,7 +329,6 @@ public void RemoveAllAbilities()
     }
     
     // Métodos públicos para acceso desde otras clases
-    
     public int GetAbilityCount()
     {
         return activeAbilities.Count;
@@ -481,10 +356,22 @@ public void RemoveAllAbilities()
         return targetPosition;
     }
     
-    // Método añadido para compatibilidad con código existente que necesite
-    // acceder al estado de pausa de impacto
-    public bool IsInImpactPause()
+    // Método para verificar si hay alguna pausa de habilidad activa
+    private bool IsInAbilityPause()
     {
-        return isInImpactPause;
+        // Verificar pausa explícitamente
+        if (isInImpactPause)
+        {
+            return true;
+        }
+        
+        // Verificar directamente el estado de inmobilización de StrongJump
+        StrongJumpAbility sjAbility = GetComponent<StrongJumpAbility>();
+        if (sjAbility != null && sjAbility.IsImmobilized)
+        {
+            return true;
+        }
+        
+        return false;
     }
 }
