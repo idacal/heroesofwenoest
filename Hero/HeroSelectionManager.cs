@@ -12,6 +12,7 @@ public class HeroSelectionManager : NetworkBehaviour
     
     [Header("Hero Data")]
     [SerializeField] private HeroData[] availableHeroes;
+    [SerializeField] private GameObject defaultPlayerPrefab; // Added default player prefab reference
     
     [Header("Settings")]
     [SerializeField] private float selectionTimeLimit = 30f; // Optional time limit for selection
@@ -24,6 +25,9 @@ public class HeroSelectionManager : NetworkBehaviour
     
     // Dictionary to track player selections, using NetworkList for sync
     private readonly NetworkList<PlayerHeroSelection> playerSelections;
+    
+    // Dictionary to store hero selections for game manager
+    private Dictionary<ulong, int> playerHeroSelections = new Dictionary<ulong, int>();
     
     // Local tracking of our selection and ready state
     private int localSelectedHeroIndex = -1;
@@ -153,6 +157,9 @@ public class HeroSelectionManager : NetworkBehaviour
             // Clear previous selections
             playerSelections.Clear();
             
+            // Clear the player hero selections dictionary
+            playerHeroSelections.Clear();
+            
             // Add initial entries for all connected players
             foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
             {
@@ -269,7 +276,17 @@ public class HeroSelectionManager : NetworkBehaviour
     {
         if (!IsClient || localSelectedHeroIndex < 0) return;
         
-        Debug.Log($"[HeroSelectionManager] Confirming hero selection: {availableHeroes[localSelectedHeroIndex].heroName}");
+        // AÑADIR ESTOS LOGS DE DIAGNÓSTICO
+        Debug.Log($"[HeroSelectionManager] Confirmando selección de héroe: índice={localSelectedHeroIndex}");
+        
+        if (availableHeroes != null && localSelectedHeroIndex < availableHeroes.Length)
+        {
+            Debug.Log($"[HeroSelectionManager] Héroe seleccionado: {availableHeroes[localSelectedHeroIndex].heroName}");
+        }
+        else
+        {
+            Debug.LogError($"[HeroSelectionManager] Error: índice de héroe inválido o array de héroes no configurado");
+        }
         
         // Update local state
         localPlayerReady = true;
@@ -333,29 +350,41 @@ public class HeroSelectionManager : NetworkBehaviour
     private void ConfirmHeroSelectionServerRpc(ServerRpcParams rpcParams = default)
     {
         ulong clientId = rpcParams.Receive.SenderClientId;
-        Debug.Log($"[HeroSelectionManager] Server received confirmation from client {clientId}");
+        Debug.Log($"[HeroSelectionManager] Servidor recibió confirmación del cliente {clientId}");
         
-        // Find this player's selection entry
+        // Encontrar la entrada de selección de este jugador
         for (int i = 0; i < playerSelections.Count; i++)
         {
             if (playerSelections[i].clientId == clientId)
             {
-                // Make sure they have a valid selection
+                // Asegurarse de que tienen una selección válida
                 if (playerSelections[i].selectedHeroIndex >= 0)
                 {
-                    // Update the ready state
+                    // Actualizar el estado de preparado
                     PlayerHeroSelection selection = playerSelections[i];
                     selection.isReady = true;
                     playerSelections[i] = selection;
                     
-                    Debug.Log($"[HeroSelectionManager] Client {clientId} confirmed hero: {availableHeroes[selection.selectedHeroIndex].heroName}");
+                    // AÑADIR: Verificación adicional
+                    int heroIndex = selection.selectedHeroIndex;
+                    Debug.Log($"[HeroSelectionManager] Cliente {clientId} confirmó héroe con índice {heroIndex}");
                     
-                    // Check if all players are ready
+                    // Verificar disponibilidad de héroe
+                    if (availableHeroes != null && heroIndex < availableHeroes.Length && availableHeroes[heroIndex] != null)
+                    {
+                        Debug.Log($"[HeroSelectionManager] Héroe confirmado: {availableHeroes[heroIndex].heroName}");
+                    }
+                    else
+                    {
+                        Debug.LogError($"[HeroSelectionManager] Error: Índice de héroe {heroIndex} no disponible en availableHeroes");
+                    }
+                    
+                    // Verificar si todos los jugadores están listos
                     CheckAllPlayersReady();
                 }
                 else
                 {
-                    Debug.LogWarning($"[HeroSelectionManager] Client {clientId} tried to confirm without selecting a hero");
+                    Debug.LogWarning($"[HeroSelectionManager] El cliente {clientId} intentó confirmar sin seleccionar un héroe");
                     NotifyInvalidConfirmationClientRpc(clientId);
                 }
                 break;
@@ -449,7 +478,7 @@ public class HeroSelectionManager : NetworkBehaviour
         if (gameManager != null)
         {
             // Convert to a simpler format for the game manager
-            Dictionary<ulong, int> playerHeroSelections = new Dictionary<ulong, int>();
+            playerHeroSelections = new Dictionary<ulong, int>();
             foreach (var selection in playerSelections)
             {
                 playerHeroSelections[selection.clientId] = selection.selectedHeroIndex;
@@ -566,20 +595,98 @@ public class HeroSelectionManager : NetworkBehaviour
     }
 
     public void UpdateHeroSelectionUI()
-{
-    // Update UI to show available heroes
-    if (heroSelectionUI != null)
     {
-        // Make sure UI is visible
-        heroSelectionUI.gameObject.SetActive(true);
-        heroSelectionUI.Show();
+        // Update UI to show available heroes
+        if (heroSelectionUI != null)
+        {
+            // Make sure UI is visible
+            heroSelectionUI.gameObject.SetActive(true);
+            heroSelectionUI.Show();
+            
+            // Update the UI with available heroes
+            heroSelectionUI.UpdateHeroButtonsDisplay(availableHeroes);
+        }
+        else
+        {
+            Debug.LogError("[HeroSelectionManager] Hero Selection UI reference is missing!");
+        }
+    }
+    
+    // Added method for handling player connections after hero selection
+    private void OnPlayerConnected(ulong clientId)
+    {
+        Debug.Log($"[HeroSelectionManager] New player connected with ID: {clientId}");
         
-        // Update the UI with available heroes
-        heroSelectionUI.UpdateHeroButtonsDisplay(availableHeroes);
+        // If hero selection phase is complete, spawn with selected hero
+        if (playerHeroSelections.Count > 0)
+        {
+            SpawnPlayerWithSelectedHero(clientId);
+        }
     }
-    else
+    
+    // Added method for spawning player with selected hero
+    private void SpawnPlayerWithSelectedHero(ulong clientId)
     {
-        Debug.LogError("[HeroSelectionManager] Hero Selection UI reference is missing!");
+        Debug.Log($"[HeroSelectionManager] Spawning player {clientId} with selected hero");
+        
+        // Check if this player has a hero selection
+        if (playerHeroSelections.TryGetValue(clientId, out int heroIndex))
+        {
+            Debug.Log($"[HeroSelectionManager] Client {clientId} selected hero with index {heroIndex}");
+            
+            // Check if the hero index is valid
+            if (heroIndex >= 0 && heroIndex < availableHeroes.Length)
+            {
+                // Get the hero data
+                HeroData heroData = availableHeroes[heroIndex];
+                
+                // Return hero prefab if it exists
+                if (heroData != null && heroData.heroPrefab != null)
+                {
+                    Debug.Log($"[HeroSelectionManager] Using hero prefab for client {clientId}: {heroData.heroName}");
+                    // Logic for spawning would go here
+                }
+                else
+                {
+                    Debug.LogError($"[HeroSelectionManager] Hero data is null or prefab is not assigned for index {heroIndex}");
+                }
+            }
+            else
+            {
+                Debug.LogError($"[HeroSelectionManager] Invalid hero index: {heroIndex} (max: {availableHeroes.Length-1})");
+            }
+        }
+        else
+        {
+            Debug.LogError($"[HeroSelectionManager] No hero selection found for client {clientId}");
+        }
     }
-}
+    
+    // Method to get hero prefab for player
+    private GameObject GetHeroPrefabForPlayer(ulong clientId)
+    {
+        // Check if this player has a hero selection
+        if (playerHeroSelections.TryGetValue(clientId, out int heroIndex))
+        {
+            Debug.Log($"[HeroSelectionManager] Client {clientId} selected hero with index {heroIndex}");
+            
+            // Check if the hero index is valid
+            if (heroIndex >= 0 && heroIndex < availableHeroes.Length)
+            {
+                // Get the hero data
+                HeroData heroData = availableHeroes[heroIndex];
+                
+                // Return hero prefab if it exists
+                if (heroData != null && heroData.heroPrefab != null)
+                {
+                    Debug.Log($"[HeroSelectionManager] Using hero prefab for client {clientId}: {heroData.heroName}");
+                    return heroData.heroPrefab;
+                }
+            }
+        }
+        
+        // Fallback to default player prefab
+        Debug.LogWarning($"[HeroSelectionManager] Using default player prefab for client {clientId}");
+        return defaultPlayerPrefab;
+    }
 }
