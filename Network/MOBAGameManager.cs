@@ -189,24 +189,17 @@ public void StartGameWithHeroSelections(Dictionary<ulong, int> heroSelections)
     // Registra nuevamente el evento de conexión de jugadores
     NetworkManager.Singleton.OnClientConnectedCallback += OnPlayerConnected;
     
-    // Registra los clientes conectados
-    Debug.Log($"[MOBAGameManager] Clientes conectados: {NetworkManager.Singleton.ConnectedClientsIds.Count}");
-    foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
-    {
-        Debug.Log($"[MOBAGameManager] Cliente ID conectado: {clientId}");
-    }
-    
     // Limpia cualquier instancia de jugador que pudiera haber sido creada
     foreach (var player in FindObjectsOfType<PlayerNetwork>())
     {
-        // No eliminar si está en nuestras selecciones de héroe (jugador legítimo)
+        // No eliminar jugadores legítimos
         if (playerHeroSelections.ContainsKey(player.OwnerClientId))
         {
             Debug.Log($"[MOBAGameManager] Manteniendo instancia legítima de jugador: {player.OwnerClientId}");
             continue;
         }
         
-        // Limpiar instancia inesperada de jugador
+        // Limpiar instancia inesperada
         if (player.NetworkObject != null && player.NetworkObject.IsSpawned)
         {
             Debug.Log($"[MOBAGameManager] Limpiando instancia inesperada de jugador: {player.OwnerClientId}");
@@ -214,17 +207,17 @@ public void StartGameWithHeroSelections(Dictionary<ulong, int> heroSelections)
         }
     }
     
-    // IMPORTANTE: Genera jugadores con sus héroes seleccionados
+    // Genera jugadores con sus héroes seleccionados
     foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
     {
-        // Verificar si este cliente ya tiene un jugador spawneado para evitar duplicados
+        // Verificar si este cliente ya tiene un jugador spawneado
         bool yaSpawneado = false;
         foreach (var player in FindObjectsOfType<PlayerNetwork>())
         {
             if (player.OwnerClientId == clientId && player.IsSpawned)
             {
                 yaSpawneado = true;
-                Debug.Log($"[MOBAGameManager] Cliente {clientId} ya tiene una instancia de jugador, omitiendo spawn");
+                Debug.Log($"[MOBAGameManager] Cliente {clientId} ya tiene una instancia de jugador");
                 break;
             }
         }

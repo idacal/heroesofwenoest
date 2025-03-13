@@ -283,7 +283,7 @@ public class PlayerAbilityManager : NetworkBehaviour
                 abilities.RemoveAt(i);
                 
                 // Eliminar de slots
-                foreach (var slotPair in abilitySlots.ToArray())
+                foreach (var slotPair in abilitySlots)
                 {
                     if (slotPair.Value == ability)
                     {

@@ -17,23 +17,26 @@ public class AbilityPowerUp : NetworkBehaviour
     [SerializeField] private float activeDuration = 30f; // Tiempo que dura la habilidad una vez recogida, 0 para indefinido
     [SerializeField] private GameObject pickupEffectPrefab; // Efecto visual al recoger
     
-    private void OnTriggerEnter(Collider other)
+private void OnTriggerEnter(Collider other)
+{
+    // Try to get the new ability system first
+    PlayerAbilityManager abilityManager = other.GetComponent<PlayerAbilityManager>();
+    
+    if (abilityManager != null && abilityManager.IsOwner)
     {
-        // ACTUALIZADO: Verificar primero PlayerAbilityManager, luego PlayerAbilityController por compatibilidad
-        PlayerAbilityManager abilityManager = other.GetComponent<PlayerAbilityManager>();
+        // Prioritize using the new system
+        CollectPowerUpServerRpc(abilityManager.GetComponent<NetworkObject>().OwnerClientId);
+    }
+    else
+    {
+        // Fall back to old system only if necessary
         PlayerAbilityController abilityController = other.GetComponent<PlayerAbilityController>();
-        
-        if (abilityManager != null && abilityManager.IsOwner)
+        if (abilityController != null && abilityController.IsOwner)
         {
-            // Solicitar al servidor que procese la recogida usando el sistema nuevo
-            CollectPowerUpServerRpc(abilityManager.GetComponent<NetworkObject>().OwnerClientId);
-        }
-        else if (abilityController != null && abilityController.IsOwner)
-        {
-            // Solicitar al servidor que procese la recogida usando el sistema viejo
             CollectPowerUpServerRpc(abilityController.GetComponent<NetworkObject>().OwnerClientId);
         }
     }
+}
     
     [ServerRpc(RequireOwnership = false)]
     private void CollectPowerUpServerRpc(ulong playerId)

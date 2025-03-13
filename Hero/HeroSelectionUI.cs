@@ -308,87 +308,107 @@ public class HeroSelectionUI : MonoBehaviour
     }
     
     private void SetupHeroButtons()
+{
+    Debug.Log("[HeroSelectionUI] Setting up hero buttons. Count: " + (heroButtons != null ? heroButtons.Length : 0));
+    
+    // Set up click handlers for each hero button
+    if (heroButtons == null)
     {
-        Debug.Log("[HeroSelectionUI] Setting up hero buttons. Count: " + (heroButtons != null ? heroButtons.Length : 0));
-        
-        // Set up click handlers for each hero button
-        if (heroButtons == null)
+        Debug.LogError("[HeroSelectionUI] heroButtons array is null!");
+        return;
+    }
+    
+    for (int i = 0; i < heroButtons.Length; i++)
+    {
+        if (heroButtons[i] != null)
         {
-            Debug.LogError("[HeroSelectionUI] heroButtons array is null!");
-            return;
-        }
-        
-        for (int i = 0; i < heroButtons.Length; i++)
-        {
-            if (heroButtons[i] != null)
+            int heroIndex = i; // Need to capture the index for the lambda
+            
+            // Remuevo los listeners existentes
+            heroButtons[i].onClick.RemoveAllListeners();
+            
+            // Añado un nuevo listener con un debug explícito
+            heroButtons[i].onClick.AddListener(() => {
+                Debug.Log($"[HeroSelectionUI] Hero button {heroIndex} clicked!");
+                OnHeroButtonClicked(heroIndex);
+            });
+            
+            // Verificar si el héroe existe en el manager
+            if (heroSelectionManager != null)
             {
-                int heroIndex = i; // Need to capture the index for the lambda
+                // Intentamos obtener HeroDefinition primero (nuevo sistema)
+                HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(i);
                 
-                // Remuevo los listeners existentes
-                heroButtons[i].onClick.RemoveAllListeners();
-                
-                // Añado un nuevo listener con un debug explícito
-                heroButtons[i].onClick.AddListener(() => {
-                    Debug.Log($"[HeroSelectionUI] Hero button {heroIndex} clicked!");
-                    OnHeroButtonClicked(heroIndex);
-                });
-                
-                // Verificar si el héroe existe en el manager
-                if (heroSelectionManager != null)
+                if (heroDefinition != null)
                 {
+                    // Configurar la visualización del botón con datos reales
+                    ConfigureHeroButton(heroButtons[i], heroDefinition);
+                }
+                else
+                {
+                    // Fallback al sistema anterior si necesario
                     HeroData heroData = heroSelectionManager.GetHeroData(i);
                     if (heroData != null)
                     {
-                        // Configurar la visualización del botón con datos reales
-                        ConfigureHeroButton(heroButtons[i], heroData);
+                        // Crear una definición temporal basada en HeroData
+                        HeroDefinition tempDefinition = ScriptableObject.CreateInstance<HeroDefinition>();
+                        tempDefinition.heroName = heroData.heroName;
+                        tempDefinition.portrait = heroData.portrait;
+                        tempDefinition.heroClass = heroData.heroClass;
+                        
+                        // Usar la definición temporal
+                        ConfigureHeroButton(heroButtons[i], tempDefinition);
+                        
+                        Debug.LogWarning($"[HeroSelectionUI] Usando HeroData convertido para índice {i}. Considere migrar a HeroDefinition.");
                     }
                     else
                     {
                         Debug.LogWarning($"[HeroSelectionUI] No hero data for index {i}");
                     }
                 }
-                
-                Debug.Log($"[HeroSelectionUI] Hero button {i} listener set up");
             }
-            else
-            {
-                Debug.LogError($"[HeroSelectionUI] Hero button at index {i} is null!");
-            }
+            
+            Debug.Log($"[HeroSelectionUI] Hero button {i} listener set up");
+        }
+        else
+        {
+            Debug.LogError($"[HeroSelectionUI] Hero button at index {i} is null!");
         }
     }
+}
     
 private void ConfigureHeroButton(Button button, HeroDefinition heroDefinition)
+{
+    // Configurar el botón con datos del héroe
+    if (button != null && heroDefinition != null)
     {
-        // Configurar el botón con datos del héroe
-        if (button != null && heroData != null)
+        // Buscar componentes en el botón
+        TextMeshProUGUI buttonText = button.GetComponentInChildren<TextMeshProUGUI>();
+        Image buttonImage = button.GetComponentInChildren<Image>();
+        
+        // Configurar texto si existe
+        if (buttonText != null)
         {
-            // Buscar componentes en el botón
-            TextMeshProUGUI buttonText = button.GetComponentInChildren<TextMeshProUGUI>();
-            Image buttonImage = button.GetComponentInChildren<Image>();
-            
-            // Configurar texto si existe
-            if (button != null && heroDefinition != null)
-            {
-                buttonText.text = heroData.heroName;
-            }
-            
-            // Configurar imagen si existe y hay retrato
-            if (buttonImage != null && heroData.portrait != null)
-            {
-                buttonImage.sprite = heroData.portrait;
-                buttonImage.preserveAspect = true;
-            }
-            
-            // Make sure raycast target is enabled
-            if (buttonImage != null)
-            {
-                buttonImage.raycastTarget = true;
-            }
-            
-            // Hacer el botón interactivo
-            button.interactable = true;
+            buttonText.text = heroDefinition.heroName;
         }
+        
+        // Configurar imagen si existe y hay retrato
+        if (buttonImage != null && heroDefinition.portrait != null)
+        {
+            buttonImage.sprite = heroDefinition.portrait;
+            buttonImage.preserveAspect = true;
+        }
+        
+        // Make sure raycast target is enabled
+        if (buttonImage != null)
+        {
+            buttonImage.raycastTarget = true;
+        }
+        
+        // Hacer el botón interactivo
+        button.interactable = true;
     }
+}
     
     public void OnHeroButtonClicked(int heroIndex)
     {
