@@ -13,11 +13,11 @@ public class HeroDefinition : ScriptableObject
     public GameObject modelPrefab;
 
     [Header("Base Stats")]
-    public float baseHealth = 1000f;
-    public float baseMana = 500f;
-    public float healthRegen = 5f;
-    public float manaRegen = 10f;
-    public float moveSpeed = 7f;
+    public float baseHealth = 200f;
+    public float baseMana = 100f;
+    public float healthRegen = 1f;
+    public float manaRegen = 5f;
+    public float moveSpeed = 10f;
 
     [Header("Abilities")]
     public List<AbilityDefinition> abilities = new List<AbilityDefinition>();
