@@ -882,4 +882,33 @@ public class HeroSelectionUI : MonoBehaviour
             }
         }
     }
+    public void UpdateHeroButtonsDisplay(HeroData[] availableHeroes)
+{
+    if (heroButtons == null || heroButtons.Length == 0)
+    {
+        Debug.LogError("[HeroSelectionUI] Hero buttons array is not configured properly");
+        return;
+    }
+    
+    int heroCount = availableHeroes?.Length ?? 0;
+    Debug.Log($"[HeroSelectionUI] Updating hero buttons with {heroCount} available heroes");
+    
+    // For each button, try to assign a hero if available
+    for (int i = 0; i < heroButtons.Length; i++)
+    {
+        if (heroButtons[i] == null) continue;
+        
+        if (i < heroCount && availableHeroes[i] != null)
+        {
+            // Configure button with hero data
+            ConfigureHeroButton(heroButtons[i], availableHeroes[i]);
+            heroButtons[i].gameObject.SetActive(true);
+        }
+        else
+        {
+            // Hide buttons without a corresponding hero
+            heroButtons[i].gameObject.SetActive(false);
+        }
+    }
+}
 }

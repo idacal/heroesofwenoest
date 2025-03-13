@@ -268,43 +268,66 @@ public class PlayerAbility : NetworkBehaviour
     }
     
     // NUEVO MÉTODO: Registra una habilidad adquirida por powerup en el sistema
-    public void RegisterPowerUpAbility(BaseAbility ability, int slot)
+        // Enhance the RegisterPowerUpAbility method to provide more debug information
+public void RegisterPowerUpAbility(BaseAbility ability, int slot)
+{
+    if (slot < 2 || slot >= 4)
     {
-        if (slot < 2 || slot >= 4)
-        {
-            Debug.LogError($"[PlayerAbility] Slot inválido para habilidad de powerup: {slot}. Debe ser 2 o 3.");
-            return;
-        }
-        
-        int powerUpIndex = slot - 2;
-        powerUpAbilities[powerUpIndex] = ability;
-        
-        // Si es KineticShield específicamente, guardar referencia directa
-        if (ability is KineticShieldAbility)
-        {
-            kineticShieldAbility = ability as KineticShieldAbility;
-            Debug.Log("[PlayerAbility] KineticShieldAbility guardado en referencia directa");
-        }
-        
-        // Si es SupersonicMissile específicamente, guardar referencia directa
-        if (ability is SupersonicMissileAbility)
-        {
-            missileAbility = ability as SupersonicMissileAbility;
-            Debug.Log("[PlayerAbility] SupersonicMissileAbility guardado en referencia directa");
-        }
-        
-        // Si es Shield específicamente, guardar referencia directa también
-        if (ability is ShieldAbility)
-        {
-            shieldAbility = ability as ShieldAbility;
-            Debug.Log("[PlayerAbility] ShieldAbility guardado en referencia directa");
-        }
-        
-        // Hacer una sincronización inmediata
-        SyncPowerUpAbilities();
-        
-        Debug.Log($"[PlayerAbility] Habilidad {ability.abilityName} registrada en slot {slot}");
+        Debug.LogError($"[PlayerAbility] Invalid slot for power-up ability: {slot}. Must be 2 or 3.");
+        return;
     }
+    
+    int powerUpIndex = slot - 2;
+    
+    // If there's already an ability in this slot, note it (no need to clean up)
+    if (powerUpAbilities[powerUpIndex] != null && powerUpAbilities[powerUpIndex] != ability)
+    {
+        Debug.Log($"[PlayerAbility] Replacing existing ability {powerUpAbilities[powerUpIndex].abilityName} in slot {slot}");
+    }
+    
+    powerUpAbilities[powerUpIndex] = ability;
+    
+    // Store specific ability references based on type
+    if (ability is KineticShieldAbility)
+    {
+        kineticShieldAbility = ability as KineticShieldAbility;
+        Debug.Log("[PlayerAbility] KineticShieldAbility stored in direct reference");
+    }
+    else if (ability is SupersonicMissileAbility)
+    {
+        missileAbility = ability as SupersonicMissileAbility;
+        Debug.Log("[PlayerAbility] SupersonicMissileAbility stored in direct reference");
+    }
+    else if (ability is ShieldAbility)
+    {
+        shieldAbility = ability as ShieldAbility;
+        Debug.Log("[PlayerAbility] ShieldAbility stored in direct reference");
+    }
+    
+    // If we have the abilities array, update it directly
+    if (abilities != null && abilities.Length > slot && abilities[slot] != null)
+    {
+        // Copy ability data to the abilities array for UI
+        abilities[slot].name = ability.abilityName;
+        abilities[slot].activationKey = ability.activationKey;
+        abilities[slot].manaCost = ability.manaCost;
+        abilities[slot].cooldown = ability.cooldown;
+        abilities[slot].icon = ability.icon;
+        abilities[slot].isReady = ability.isReady;
+        abilities[slot].cooldownEndTime = Time.time + ability.GetRemainingCooldown();
+        
+        Debug.Log($"[PlayerAbility] Updated ability data in slot {slot}: {abilities[slot].name}, Key: {abilities[slot].activationKey}");
+    }
+    else
+    {
+        Debug.LogWarning($"[PlayerAbility] Could not update ability data in slot {slot} - abilities array not properly configured");
+    }
+    
+    // Make a synchronization immediately
+    SyncPowerUpAbilities();
+    
+    Debug.Log($"[PlayerAbility] Ability {ability.abilityName} registered in slot {slot}");
+}
     
     // NUEVO MÉTODO: Desregistra una habilidad de powerup
     public void UnregisterPowerUpAbility(int slot)
@@ -404,4 +427,5 @@ public class PlayerAbility : NetworkBehaviour
         }
         return 0f;
     }
+
 }

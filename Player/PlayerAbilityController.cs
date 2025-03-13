@@ -275,31 +275,43 @@ public class PlayerAbilityController : NetworkBehaviour
     
     // Métodos para agregar/eliminar habilidades dinámicamente
     
-    public T AddAbility<T>() where T : BaseAbility
+public T AddAbility<T>() where T : BaseAbility
+{
+    // Verify if ability already exists
+    foreach (var ability in activeAbilities)
     {
-        // Verificar si ya existe esta habilidad
-        foreach (var ability in activeAbilities)
+        if (ability is T)
         {
-            if (ability is T)
-            {
-                Debug.LogWarning($"La habilidad {typeof(T).Name} ya está añadida al jugador");
-                return ability as T;
-            }
+            Debug.LogWarning($"The ability {typeof(T).Name} is already added to the player");
+            return ability as T;
         }
-        
-        // Añadir la nueva habilidad
-        T newAbility = gameObject.AddComponent<T>();
-        newAbility.Initialize(this);
-        activeAbilities.Add(newAbility);
-        
-        // Informar de la adición de la habilidad
-        if (IsOwner)
-        {
-            Debug.Log($"Nueva habilidad adquirida: {newAbility.abilityName}");
-        }
-        
-        return newAbility;
     }
+    
+    // Add the new ability and initialize it properly
+    T newAbility = gameObject.AddComponent<T>();
+    
+    // Initialize with the correct NetworkBehaviour owner
+    newAbility.Initialize(this);
+    activeAbilities.Add(newAbility);
+    
+    // Track common abilities by type for quick access
+    if (newAbility is DashAbility dashAbility)
+    {
+        this.dashAbility = dashAbility;
+    }
+    else if (newAbility is EarthquakeAbility earthquakeAbility)
+    {
+        this.earthquakeAbility = earthquakeAbility;
+    }
+    
+    // Log the addition of the ability if we're the owner
+    if (IsOwner)
+    {
+        Debug.Log($"New ability acquired: {newAbility.abilityName}");
+    }
+    
+    return newAbility;
+}
     
     public bool RemoveAbility<T>() where T : BaseAbility
     {
@@ -326,18 +338,43 @@ public class PlayerAbilityController : NetworkBehaviour
         return false;
     }
     
-    public void RemoveAllAbilities()
+public void RemoveAllAbilities()
+{
+    // Keep track of which abilities we've already seen to avoid duplicates
+    HashSet<BaseAbility> processedAbilities = new HashSet<BaseAbility>();
+    
+    // First, process all abilities in our activeAbilities list
+    foreach (var ability in activeAbilities)
     {
-        foreach (var ability in activeAbilities)
+        if (ability != null && !processedAbilities.Contains(ability))
         {
+            processedAbilities.Add(ability);
             ability.Cleanup();
             Destroy(ability);
         }
-        
-        activeAbilities.Clear();
-        dashAbility = null;
-        earthquakeAbility = null;
     }
+    
+    // Then also look for any abilities that might have been added directly as components
+    // but not registered in our list
+    foreach (var ability in GetComponents<BaseAbility>())
+    {
+        if (ability != null && !processedAbilities.Contains(ability))
+        {
+            processedAbilities.Add(ability);
+            ability.Cleanup();
+            Destroy(ability);
+        }
+    }
+    
+    // Clear the list of active abilities
+    activeAbilities.Clear();
+    
+    // Reset ability references
+    dashAbility = null;
+    earthquakeAbility = null;
+    
+    Debug.Log("[PlayerAbilityController] All abilities have been removed and cleaned up");
+}
     
     // Métodos de red
     

@@ -172,144 +172,157 @@ public class MOBAGameManager : NetworkBehaviour
     }
     
     // This method will be called by the HeroSelectionManager when all players have selected heroes
-    public void StartGameWithHeroSelections(Dictionary<ulong, int> heroSelections)
+    // This method will be called by the HeroSelectionManager when all players have selected heroes
+public void StartGameWithHeroSelections(Dictionary<ulong, int> heroSelections)
+{
+    if (!IsServer) return;
+    
+    Debug.Log("[MOBAGameManager] Starting game with hero selections");
+    
+    // Clear any existing event registrations first to avoid duplicates
+    NetworkManager.Singleton.OnClientConnectedCallback -= OnPlayerConnected;
+    
+    // Update selection mode
+    inHeroSelectionMode = false;
+    
+    // Store the hero selections
+    playerHeroSelections = heroSelections;
+    
+    // Register for player connection events now that selection is complete
+    NetworkManager.Singleton.OnClientConnectedCallback += OnPlayerConnected;
+    
+    // Clear any existing player instances that might have been created
+    foreach (var player in FindObjectsOfType<PlayerNetwork>())
     {
-        if (!IsServer) return;
-        
-        Debug.Log("[MOBAGameManager] Starting game with hero selections");
-        
-        // Clear any existing event registrations first to avoid duplicates
-        NetworkManager.Singleton.OnClientConnectedCallback -= OnPlayerConnected;
-        
-        // Update selection mode
-        inHeroSelectionMode = false;
-        
-        // Store the hero selections
-        playerHeroSelections = heroSelections;
-        
-        // Register for player connection events now that selection is complete
-        NetworkManager.Singleton.OnClientConnectedCallback += OnPlayerConnected;
-        
-        // Clear any existing player instances that might have been created
-        foreach (var player in FindObjectsOfType<PlayerNetwork>())
+        // Don't despawn if it's in our hero selections (legitimate player)
+        if (playerHeroSelections.ContainsKey(player.OwnerClientId))
         {
-            // Don't despawn if it's in our hero selections (legitimate player)
-            if (playerHeroSelections.ContainsKey(player.OwnerClientId))
-            {
-                Debug.Log($"[MOBAGameManager] Keeping legitimate player instance: {player.OwnerClientId}");
-                continue;
-            }
-            
-            // Clean up unexpected player instance
-            if (player.NetworkObject != null && player.NetworkObject.IsSpawned)
-            {
-                Debug.Log($"[MOBAGameManager] Cleaning up unexpected player instance: {player.OwnerClientId}");
-                player.NetworkObject.Despawn();
-            }
+            Debug.Log($"[MOBAGameManager] Keeping legitimate player instance: {player.OwnerClientId}");
+            continue;
         }
         
-        // Log the connected clients
-        Debug.Log($"[MOBAGameManager] Connected clients: {NetworkManager.Singleton.ConnectedClientsIds.Count}");
-        foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
+        // Clean up unexpected player instance
+        if (player.NetworkObject != null && player.NetworkObject.IsSpawned)
         {
-            Debug.Log($"[MOBAGameManager] Connected client ID: {clientId}");
-        }
-        
-        // Spawn players with their selected heroes
-        foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
-        {
-            // Check if this client is already spawned to avoid duplicates
-            bool alreadySpawned = false;
-            foreach (var player in FindObjectsOfType<PlayerNetwork>())
-            {
-                if (player.OwnerClientId == clientId)
-                {
-                    alreadySpawned = true;
-                    Debug.Log($"[MOBAGameManager] Client {clientId} already has a player instance, skipping spawn");
-                    break;
-                }
-            }
-            
-            if (!alreadySpawned)
-            {
-                Debug.Log($"[MOBAGameManager] Spawning player for client {clientId}");
-                SpawnPlayerWithSelectedHero(clientId);
-            }
+            Debug.Log($"[MOBAGameManager] Cleaning up unexpected player instance: {player.OwnerClientId}");
+            player.NetworkObject.Despawn();
         }
     }
     
-    // Modified player spawning method that uses the selected hero
-    private void SpawnPlayerWithSelectedHero(ulong clientId)
+    // Log the connected clients
+    Debug.Log($"[MOBAGameManager] Connected clients: {NetworkManager.Singleton.ConnectedClientsIds.Count}");
+    foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
     {
-        // Determine which team the player should join
-        int teamId = (playerSpawnCount % 2) + 1;
-        playerTeams[clientId] = teamId;
-        
-        // Select spawn point
-        Transform[] spawnPoints = (teamId == 1) ? team1SpawnPoints : team2SpawnPoints;
-        if (spawnPoints == null || spawnPoints.Length == 0)
+        Debug.Log($"[MOBAGameManager] Connected client ID: {clientId}");
+    }
+    
+    // Spawn players with their selected heroes
+    foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
+    {
+        // Check if this client is already spawned to avoid duplicates
+        bool alreadySpawned = false;
+        foreach (var player in FindObjectsOfType<PlayerNetwork>())
         {
-            Debug.LogError($"[MOBAGameManager] Error: No spawn points configured for team {teamId}");
-            return;
+            if (player.OwnerClientId == clientId)
+            {
+                alreadySpawned = true;
+                Debug.Log($"[MOBAGameManager] Client {clientId} already has a player instance, skipping spawn");
+                break;
+            }
         }
         
-        // Use modulo to select spawn point
-        int spawnIndex = (playerSpawnCount / 2) % spawnPoints.Length;
-        Transform spawnPoint = spawnPoints[spawnIndex];
-        
-        // Get spawn position and rotation
-        Vector3 spawnPosition = spawnPoint.position;
-        Quaternion spawnRotation = spawnPoint.rotation;
-        
-        // Get the hero prefab based on selection
-        GameObject heroToSpawn = GetHeroPrefabForPlayer(clientId);
-        
-        Debug.Log($"[MOBAGameManager] Spawning player {clientId} as team {teamId} with hero {GetHeroNameForPlayer(clientId)} at position {spawnPosition}");
-        
-        // Instantiate the hero prefab
-        GameObject playerInstance = Instantiate(heroToSpawn, spawnPosition, spawnRotation);
-        NetworkObject networkObject = playerInstance.GetComponent<NetworkObject>();
-        
-        if (networkObject != null)
+        if (!alreadySpawned)
         {
-            // Increment spawn counter
-            playerSpawnCount++;
-            
-            // Add unique ID for better identification
-            playerInstance.name = $"Player_{clientId}_Team{teamId}_{GetHeroNameForPlayer(clientId)}";
-            
-            // Verify position
-            Debug.Log($"[MOBAGameManager] Pre-Spawn Position: {playerInstance.transform.position}");
-            
-            // Set position again to ensure accuracy
-            playerInstance.transform.position = spawnPosition;
-            playerInstance.transform.rotation = spawnRotation;
-            
-            // Spawn in network
-            networkObject.SpawnAsPlayerObject(clientId);
-            
-            // Force position after spawn
-            playerInstance.transform.position = spawnPosition;
-            playerInstance.transform.rotation = spawnRotation;
-            
-            Debug.Log($"[MOBAGameManager] Post-Spawn Position: {playerInstance.transform.position}");
-            
-            // Force sync through network
-            PlayerNetwork playerNetwork = playerInstance.GetComponent<PlayerNetwork>();
-            if (playerNetwork != null)
-            {
-                playerNetwork.SyncInitialTransformServerRpc(spawnPosition, spawnRotation);
-            }
-            
-            // Notify client about team and position
-            InitializePlayerClientRpc(clientId, teamId, spawnPosition, spawnRotation);
+            Debug.Log($"[MOBAGameManager] Spawning player for client {clientId}");
+            SpawnPlayerWithSelectedHero(clientId);
+        }
+    }
+}
+    
+    // Modified player spawning method that uses the selected hero
+    private void SpawnPlayerWithSelectedHero(ulong clientId)
+{
+    // Determine which team the player should join
+    int teamId = (playerSpawnCount % 2) + 1;
+    playerTeams[clientId] = teamId;
+    
+    // Select spawn point
+    Transform[] spawnPoints = (teamId == 1) ? team1SpawnPoints : team2SpawnPoints;
+    if (spawnPoints == null || spawnPoints.Length == 0)
+    {
+        Debug.LogError($"[MOBAGameManager] Error: No spawn points configured for team {teamId}");
+        return;
+    }
+    
+    // Use modulo to select spawn point
+    int spawnIndex = (playerSpawnCount / 2) % spawnPoints.Length;
+    Transform spawnPoint = spawnPoints[spawnIndex];
+    
+    // Get spawn position and rotation
+    Vector3 spawnPosition = spawnPoint.position;
+    Quaternion spawnRotation = spawnPoint.rotation;
+    
+    // Get the hero prefab based on selection
+    GameObject heroToSpawn = GetHeroPrefabForPlayer(clientId);
+    
+    Debug.Log($"[MOBAGameManager] Spawning player {clientId} as team {teamId} with hero {GetHeroNameForPlayer(clientId)} at position {spawnPosition}");
+    
+    // Instantiate the hero prefab
+    GameObject playerInstance = Instantiate(heroToSpawn, spawnPosition, spawnRotation);
+    NetworkObject networkObject = playerInstance.GetComponent<NetworkObject>();
+    
+    if (networkObject != null)
+    {
+        // Increment spawn counter
+        playerSpawnCount++;
+        
+        // Add unique ID for better identification
+        playerInstance.name = $"Player_{clientId}_Team{teamId}_{GetHeroNameForPlayer(clientId)}";
+        
+        // Verify position
+        Debug.Log($"[MOBAGameManager] Pre-Spawn Position: {playerInstance.transform.position}");
+        
+        // Set position again to ensure accuracy
+        playerInstance.transform.position = spawnPosition;
+        playerInstance.transform.rotation = spawnRotation;
+        
+        // Spawn in network
+        networkObject.SpawnAsPlayerObject(clientId);
+        
+        // Force position after spawn
+        playerInstance.transform.position = spawnPosition;
+        playerInstance.transform.rotation = spawnRotation;
+        
+        Debug.Log($"[MOBAGameManager] Post-Spawn Position: {playerInstance.transform.position}");
+        
+        // Force sync through network
+        PlayerNetwork playerNetwork = playerInstance.GetComponent<PlayerNetwork>();
+        if (playerNetwork != null)
+        {
+            playerNetwork.SyncInitialTransformServerRpc(spawnPosition, spawnRotation);
+        }
+        
+        // IMPORTANT: NEW CODE - Initialize hero abilities right after spawning
+        Hero heroComponent = playerInstance.GetComponent<Hero>();
+        if (heroComponent != null)
+        {
+            Debug.Log($"[MOBAGameManager] Initializing abilities for hero: {heroComponent.heroName}");
+            heroComponent.InitializeHeroAbilities();
         }
         else
         {
-            Debug.LogError("[MOBAGameManager] Player prefab does not have NetworkObject component");
-            Destroy(playerInstance);
+            Debug.LogError($"[MOBAGameManager] No Hero component found on spawned player: {playerInstance.name}");
         }
+        
+        // Notify client about team and position
+        InitializePlayerClientRpc(clientId, teamId, spawnPosition, spawnRotation);
     }
+    else
+    {
+        Debug.LogError("[MOBAGameManager] Player prefab does not have NetworkObject component");
+        Destroy(playerInstance);
+    }
+}
     
     // Method to get the appropriate hero prefab for a player
     private GameObject GetHeroPrefabForPlayer(ulong clientId)

@@ -60,52 +60,41 @@ public class DamagerHero : Hero
     
     // NUEVO: Sobrescribe el método de inicialización de habilidades
     public override void InitializeHeroAbilities()
+{
+    Debug.Log($"[DamagerHero] Initializing abilities for {heroName}");
+    
+    // Get the ability controller
+    abilityController = GetComponent<PlayerAbilityController>();
+    if (abilityController == null)
     {
-        Debug.Log("[DamagerHero] Inicializando habilidades específicas para Striker");
-        
-        // Obtener el controlador de habilidades
-        if (abilityController != null)
-        {
-            // Limpiar cualquier habilidad que pueda haber sido añadida automáticamente
-            abilityController.RemoveAllAbilities();
-            
-            // Añadir habilidades específicas del Striker
-            dashAbility = abilityController.AddAbility<DashAbility>();
-            strongJumpAbility = abilityController.AddAbility<StrongJumpAbility>();
-            kineticShieldAbility = abilityController.AddAbility<KineticShieldAbility>();
-            supersonicMissileAbility = abilityController.AddAbility<SupersonicMissileAbility>();
-            
-            // Configurar habilidades con valores específicos para este héroe si es necesario
-            if (dashAbility != null)
-            {
-                // Ejemplo: ajustar cooldown para este héroe
-                // dashAbility.cooldown = 2.5f;
-            }
-            
-            if (kineticShieldAbility != null)
-            {
-                // Ejemplo: ajustar parámetros de escudo
-                // kineticShieldAbility.baseDamageReduction = 0.35f;
-            }
-            
-            if (supersonicMissileAbility != null)
-            {
-                // Ejemplo: configurar daño de misil
-                // supersonicMissileAbility.baseDamage = 120f;
-            }
-            
-            // Log para confirmar
-            Debug.Log("[DamagerHero] Habilidades inicializadas: " + 
-                      $"Dash: {dashAbility != null}, " +
-                      $"StrongJump: {strongJumpAbility != null}, " +
-                      $"KineticShield: {kineticShieldAbility != null}, " +
-                      $"SupersonicMissile: {supersonicMissileAbility != null}");
-        }
-        else
-        {
-            Debug.LogError("[DamagerHero] No se pudo encontrar PlayerAbilityController!");
-        }
+        Debug.LogError("[DamagerHero] No PlayerAbilityController found!");
+        return;
     }
+    
+    // Clear any existing abilities first
+    abilityController.RemoveAllAbilities();
+    
+    // Add Striker-specific abilities
+    dashAbility = abilityController.AddAbility<DashAbility>();
+    strongJumpAbility = abilityController.AddAbility<StrongJumpAbility>();
+    kineticShieldAbility = abilityController.AddAbility<KineticShieldAbility>();
+    supersonicMissileAbility = abilityController.AddAbility<SupersonicMissileAbility>();
+    
+    // Connect abilities to the PlayerAbility class for UI
+    PlayerAbility playerAbility = GetComponent<PlayerAbility>();
+    if (playerAbility != null)
+    {
+        // Register abilities in the slots that PlayerAbility expects
+        playerAbility.RegisterPowerUpAbility(kineticShieldAbility, 2);  // Slot 2 (E key)
+        playerAbility.RegisterPowerUpAbility(supersonicMissileAbility, 3);  // Slot 3 (R key)
+    }
+    
+    Debug.Log($"[DamagerHero] Successfully initialized abilities for {heroName}: " +
+              $"Dash: {dashAbility != null}, " +
+              $"StrongJump: {strongJumpAbility != null}, " +
+              $"KineticShield: {kineticShieldAbility != null}, " +
+              $"SupersonicMissile: {supersonicMissileAbility != null}");
+}
     
     private void InitializeHeroServer()
     {

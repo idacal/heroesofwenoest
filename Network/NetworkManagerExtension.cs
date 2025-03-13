@@ -120,54 +120,66 @@ public class NetworkManagerExtension : MonoBehaviour
     
     // Call this from your UI instead of directly calling NetworkManager.StartHost()
     public void StartHostWithHeroSelection()
+{
+    if (networkManager != null)
     {
-        if (networkManager != null)
+        Debug.Log("[NetworkManagerExtension] StartHostWithHeroSelection called");
+        
+        // CRITICAL: Hide connection panel FIRST
+        HideConnectionPanel();
+        
+        // IMPORTANT: First find and set hero selection mode BEFORE starting host
+        MOBAGameManager gameManager = FindObjectOfType<MOBAGameManager>();
+        if (gameManager != null)
         {
-            Debug.Log("[NetworkManagerExtension] StartHostWithHeroSelection called");
+            Debug.Log("[NetworkManagerExtension] Setting hero selection mode = true");
+            gameManager.SetHeroSelectionMode(true);
+        }
+        else
+        {
+            Debug.LogError("[NetworkManagerExtension] No MOBAGameManager found!");
+        }
+        
+        // Start host after setting selection mode
+        Debug.Log("[NetworkManagerExtension] Starting host...");
+        networkManager.StartHost();
+        
+        // Make sure connection panel is hidden again
+        HideConnectionPanel();
+        
+        // Ensure hero selection UI is displayed
+        if (heroSelectionUI != null)
+        {
+            Debug.Log("[NetworkManagerExtension] Showing hero selection UI");
+            heroSelectionUI.gameObject.SetActive(true);
+            heroSelectionUI.Show();
             
-            // CRITICAL: Hide connection panel FIRST
-            HideConnectionPanel();
-            
-            // IMPORTANT: First find and set hero selection mode BEFORE starting host
-            MOBAGameManager gameManager = FindObjectOfType<MOBAGameManager>();
-            if (gameManager != null)
+            // Get HeroSelectionManager and make sure it updates the UI
+            HeroSelectionManager selectionManager = FindObjectOfType<HeroSelectionManager>();
+            if (selectionManager != null)
             {
-                Debug.Log("[NetworkManagerExtension] Setting hero selection mode = true");
-                gameManager.SetHeroSelectionMode(true);
+                // Tell the manager to update the UI with available heroes
+                selectionManager.UpdateHeroSelectionUI();
             }
             else
             {
-                Debug.LogError("[NetworkManagerExtension] No MOBAGameManager found!");
+                Debug.LogError("[NetworkManagerExtension] HeroSelectionManager not found!");
             }
             
-            // Start host after setting selection mode
-            Debug.Log("[NetworkManagerExtension] Starting host...");
-            networkManager.StartHost();
-            
-            // Make sure connection panel is hidden again
-            HideConnectionPanel();
-            
-            // Show hero selection UI
-            if (heroSelectionUI != null)
+            // Set sorting order higher than connection panel
+            Canvas heroSelectionCanvas = heroSelectionUI.GetComponentInParent<Canvas>();
+            if (heroSelectionCanvas != null)
             {
-                Debug.Log("[NetworkManagerExtension] Showing hero selection UI");
-                heroSelectionUI.gameObject.SetActive(true);
-                heroSelectionUI.Show();
-                
-                // Set sorting order higher than connection panel
-                Canvas heroSelectionCanvas = heroSelectionUI.GetComponentInParent<Canvas>();
-                if (heroSelectionCanvas != null)
-                {
-                    heroSelectionCanvas.sortingOrder = 100; // Higher value = in front
-                    Debug.Log($"[NetworkManagerExtension] Set hero selection canvas sorting order to {heroSelectionCanvas.sortingOrder}");
-                }
-            }
-            else
-            {
-                Debug.LogError("[NetworkManagerExtension] heroSelectionUI is null!");
+                heroSelectionCanvas.sortingOrder = 100; // Higher value = in front
+                Debug.Log($"[NetworkManagerExtension] Set hero selection canvas sorting order to {heroSelectionCanvas.sortingOrder}");
             }
         }
+        else
+        {
+            Debug.LogError("[NetworkManagerExtension] heroSelectionUI is null!");
+        }
     }
+}
     
     // Call this from your UI instead of directly calling NetworkManager.StartClient()
     public void StartClientWithHeroSelection()

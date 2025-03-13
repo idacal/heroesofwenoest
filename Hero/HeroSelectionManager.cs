@@ -564,4 +564,22 @@ public class HeroSelectionManager : NetworkBehaviour
             }
         }
     }
+
+    public void UpdateHeroSelectionUI()
+{
+    // Update UI to show available heroes
+    if (heroSelectionUI != null)
+    {
+        // Make sure UI is visible
+        heroSelectionUI.gameObject.SetActive(true);
+        heroSelectionUI.Show();
+        
+        // Update the UI with available heroes
+        heroSelectionUI.UpdateHeroButtonsDisplay(availableHeroes);
+    }
+    else
+    {
+        Debug.LogError("[HeroSelectionManager] Hero Selection UI reference is missing!");
+    }
+}
 }
