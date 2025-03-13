@@ -10,11 +10,9 @@ public class DamagerHero : Hero
     [SerializeField] private float criticalChance = 0.1f;  // 10% base critical chance
     [SerializeField] private GameObject specialAttackEffect;
     
-    // Referencias a habilidades específicas
+    // Referencias a habilidades específicas (actualizadas)
     private DashAbility dashAbility;
     private StrongJumpAbility strongJumpAbility;
-    
-    // NUEVAS referencias a habilidades agregadas
     private KineticShieldAbility kineticShieldAbility;
     private SupersonicMissileAbility supersonicMissileAbility;
     
@@ -50,44 +48,33 @@ public class DamagerHero : Hero
             // Client-side initialization
             InitializeHeroClient();
         }
-        
-        // NUEVO: Inicializar habilidades específicas de este héroe
-        if (IsServer || IsOwner)
-        {
-            InitializeHeroAbilities();
-        }
     }
     
-    // NUEVO: Sobrescribe el método de inicialización de habilidades
+    // ACTUALIZADO: Sobrescribe el método de inicialización de habilidades para usar PlayerAbilityManager
     public override void InitializeHeroAbilities()
     {
         Debug.Log($"[DamagerHero] Initializing abilities for {heroName}");
         
-        // Get the ability controller
-        abilityController = GetComponent<PlayerAbilityController>();
-        if (abilityController == null)
+        // Asegurarnos de tener el PlayerAbilityManager
+        if (abilityManager == null)
         {
-            Debug.LogError("[DamagerHero] No PlayerAbilityController found!");
+            abilityManager = GetComponent<PlayerAbilityManager>();
+        }
+        
+        if (abilityManager == null)
+        {
+            Debug.LogError("[DamagerHero] No PlayerAbilityManager found!");
             return;
         }
         
         // Clear any existing abilities first
-        abilityController.RemoveAllAbilities();
+        abilityManager.RemoveAllAbilities();
         
-        // Add Striker-specific abilities
-        dashAbility = abilityController.AddAbility<DashAbility>();
-        strongJumpAbility = abilityController.AddAbility<StrongJumpAbility>();
-        kineticShieldAbility = abilityController.AddAbility<KineticShieldAbility>();
-        supersonicMissileAbility = abilityController.AddAbility<SupersonicMissileAbility>();
-        
-        // Connect abilities to the PlayerAbility class for UI
-        PlayerAbility playerAbility = GetComponent<PlayerAbility>();
-        if (playerAbility != null)
-        {
-            // Register abilities in the slots that PlayerAbility expects
-            playerAbility.RegisterPowerUpAbility(kineticShieldAbility, 2);  // Slot 2 (E key)
-            playerAbility.RegisterPowerUpAbility(supersonicMissileAbility, 3);  // Slot 3 (R key)
-        }
+        // Add Striker-specific abilities con slots específicos para UI
+        dashAbility = abilityManager.AddAbility<DashAbility>(0);
+        strongJumpAbility = abilityManager.AddAbility<StrongJumpAbility>(1);
+        kineticShieldAbility = abilityManager.AddAbility<KineticShieldAbility>(2);
+        supersonicMissileAbility = abilityManager.AddAbility<SupersonicMissileAbility>(3);
         
         Debug.Log($"[DamagerHero] Successfully initialized abilities for {heroName}: " +
                   $"Dash: {dashAbility != null}, " +
@@ -119,31 +106,30 @@ public class DamagerHero : Hero
     
     private void GetAbilityReferences()
     {
-        // Get references to the specific abilities we want to use
-        if (abilityController != null)
+        // ACTUALIZADO: Buscar habilidades directamente en PlayerAbilityManager
+        if (abilityManager != null)
         {
-            // Look through all abilities and find the ones we need
-            BaseAbility[] abilities = GetComponents<BaseAbility>();
-            foreach (var ability in abilities)
-            {
-                if (ability is DashAbility)
-                {
-                    dashAbility = (DashAbility)ability;
-                }
-                else if (ability is StrongJumpAbility)
-                {
-                    strongJumpAbility = (StrongJumpAbility)ability;
-                }
-                // NUEVAS comprobaciones para las nuevas habilidades
-                else if (ability is KineticShieldAbility)
-                {
-                    kineticShieldAbility = (KineticShieldAbility)ability;
-                }
-                else if (ability is SupersonicMissileAbility)
-                {
-                    supersonicMissileAbility = (SupersonicMissileAbility)ability;
-                }
-            }
+            dashAbility = abilityManager.GetAbilityOfType<DashAbility>();
+            strongJumpAbility = abilityManager.GetAbilityOfType<StrongJumpAbility>();
+            kineticShieldAbility = abilityManager.GetAbilityOfType<KineticShieldAbility>();
+            supersonicMissileAbility = abilityManager.GetAbilityOfType<SupersonicMissileAbility>();
+            
+            // Debug log para verificar
+            Debug.Log($"[DamagerHero] Ability references: " +
+                     $"Dash: {dashAbility != null}, " +
+                     $"StrongJump: {strongJumpAbility != null}, " +
+                     $"KineticShield: {kineticShieldAbility != null}, " +
+                     $"SupersonicMissile: {supersonicMissileAbility != null}");
+        }
+        else
+        {
+            Debug.LogWarning("[DamagerHero] No PlayerAbilityManager found for getting ability references");
+            
+            // Método alternativo: buscar componentes directamente
+            dashAbility = GetComponent<DashAbility>();
+            strongJumpAbility = GetComponent<StrongJumpAbility>();
+            kineticShieldAbility = GetComponent<KineticShieldAbility>();
+            supersonicMissileAbility = GetComponent<SupersonicMissileAbility>();
         }
     }
     
@@ -245,7 +231,7 @@ public class DamagerHero : Hero
                 SetCriticalChance(criticalChance * 2); // Double crit chance
             }
             
-            // NUEVO: Potenciar habilidades durante estado enfurecido
+            // Potenciar habilidades durante estado enfurecido
             if (kineticShieldAbility != null)
             {
                 // Por ejemplo: Hacer el escudo más fuerte cuando está enfurecido
@@ -279,7 +265,7 @@ public class DamagerHero : Hero
                 SetCriticalChance(criticalChance);
             }
             
-            // NUEVO: Restaurar habilidades a su potencia normal
+            // Restaurar habilidades a su potencia normal
             if (kineticShieldAbility != null)
             {
                 // Restaurar valores normales

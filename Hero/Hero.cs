@@ -1,6 +1,7 @@
 using Unity.Netcode;
 using UnityEngine;
 using System.Collections.Generic;
+using PlayerAbilities;
 
 // Base class for all heroes
 public class Hero : NetworkBehaviour
@@ -19,7 +20,7 @@ public class Hero : NetworkBehaviour
     // Referencias de componentes
     protected PlayerNetwork playerNetwork;
     protected PlayerStats playerStats;
-    protected PlayerAbilityController abilityController;
+    protected PlayerAbilityManager abilityManager; // Actualizado a PlayerAbilityManager
     protected PlayerCombat playerCombat;
     
     // Called when the hero is first created
@@ -28,8 +29,14 @@ public class Hero : NetworkBehaviour
         // Get references to components
         playerNetwork = GetComponent<PlayerNetwork>();
         playerStats = GetComponent<PlayerStats>();
-        abilityController = GetComponent<PlayerAbilityController>();
+        abilityManager = GetComponent<PlayerAbilityManager>(); // Actualizado
         playerCombat = GetComponent<PlayerCombat>();
+        
+        // Verificar componentes críticos
+        if (abilityManager == null)
+        {
+            Debug.LogWarning($"[Hero] No se encontró PlayerAbilityManager en {gameObject.name}. Algunas funcionalidades pueden no estar disponibles.");
+        }
     }
     
     public override void OnNetworkSpawn()
@@ -44,6 +51,22 @@ public class Hero : NetworkBehaviour
         
         // Setup hero visuals
         SetupHeroVisuals();
+        
+        // Initialize hero abilities (solo si somos servidor o dueño)
+        if (IsServer || IsOwner)
+        {
+            // Usar un pequeño delay para asegurar que todos los componentes estén listos
+            StartCoroutine(DelayedAbilityInitialization());
+        }
+    }
+    
+    private System.Collections.IEnumerator DelayedAbilityInitialization()
+    {
+        // Esperar un breve momento
+        yield return new WaitForSeconds(0.5f);
+        
+        // Inicializar habilidades
+        InitializeHeroAbilities();
     }
     
     protected virtual void SetupHeroVisuals()
@@ -123,21 +146,25 @@ public class Hero : NetworkBehaviour
         // Derived classes can override this to add hero-specific behavior
     }
     
-    // NUEVO: Método virtual para inicializar habilidades de héroe
+    // Método mejorado para inicializar habilidades de héroe
     public virtual void InitializeHeroAbilities()
     {
         Debug.Log($"[Hero] Initializing abilities for {heroName}");
         
-        // Get the ability controller
-        abilityController = GetComponent<PlayerAbilityController>();
-        if (abilityController == null)
+        // Get the ability manager - ACTUALIZADO para usar PlayerAbilityManager
+        if (abilityManager == null)
         {
-            Debug.LogError("[Hero] No PlayerAbilityController found!");
+            abilityManager = GetComponent<PlayerAbilityManager>();
+        }
+        
+        if (abilityManager == null)
+        {
+            Debug.LogError("[Hero] No PlayerAbilityManager found! Abilities can't be initialized.");
             return;
         }
         
         // Clear any existing abilities first
-        abilityController.RemoveAllAbilities();
+        abilityManager.RemoveAllAbilities();
         
         // In the base class, we don't add specific abilities
         // Derived hero classes will override this method to add their specific abilities
