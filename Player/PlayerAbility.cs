@@ -34,6 +34,9 @@ public class PlayerAbility : NetworkBehaviour
     private DashAbility dashAbility;
     private StrongJumpAbility strongJumpAbility; // Reemplazo de EarthquakeAbility
     private ShieldAbility shieldAbility;
+    // Añadimos referencias para nuestras nuevas habilidades
+    private SupersonicMissileAbility missileAbility;
+    private KineticShieldAbility kineticShieldAbility;
     
     // Tabla para mapear habilidades del powerup a slots del array abilities
     private BaseAbility[] powerUpAbilities = new BaseAbility[2]; // Posiciones 2 y 3 del array abilities
@@ -57,13 +60,13 @@ public class PlayerAbility : NetworkBehaviour
             abilities[0] = new Ability { name = "Dash", activationKey = KeyCode.Q, manaCost = 30f, cooldown = 3f };
         
         if (abilities[1] == null)
-            abilities[1] = new Ability { name = "Salto Fuerte", activationKey = KeyCode.W, manaCost = 20f, cooldown = 8f }; // Actualizado
+            abilities[1] = new Ability { name = "Salto Fuerte", activationKey = KeyCode.W, manaCost = 20f, cooldown = 8f };
         
         if (abilities[2] == null)
-            abilities[2] = new Ability { name = "Escudo", activationKey = KeyCode.E, manaCost = 70f, cooldown = 8f };
+            abilities[2] = new Ability { name = "Escudo Cinético", activationKey = KeyCode.E, manaCost = 70f, cooldown = 8f };
         
         if (abilities[3] == null)
-            abilities[3] = new Ability { name = "Ultimate", activationKey = KeyCode.R, manaCost = 100f, cooldown = 12f };
+            abilities[3] = new Ability { name = "Misil Supersónico", activationKey = KeyCode.R, manaCost = 120f, cooldown = 60f };
     }
 
     private void OnValidate()
@@ -100,7 +103,22 @@ public class PlayerAbility : NetworkBehaviour
         
         // Obtener referencias a las habilidades específicas
         dashAbility = GetComponent<DashAbility>();
-        strongJumpAbility = GetComponent<StrongJumpAbility>(); // Actualizado
+        strongJumpAbility = GetComponent<StrongJumpAbility>();
+        
+        // Buscar si ya existen las habilidades nuevas
+        kineticShieldAbility = GetComponent<KineticShieldAbility>();
+        if (kineticShieldAbility != null)
+        {
+            // Si ya existe, registrarlo
+            RegisterPowerUpAbility(kineticShieldAbility, 2);
+        }
+        
+        missileAbility = GetComponent<SupersonicMissileAbility>();
+        if (missileAbility != null)
+        {
+            // Si ya existe, registrarlo
+            RegisterPowerUpAbility(missileAbility, 3);
+        }
         
         // Buscar si ya existe el ShieldAbility (puede haber sido añadido antes)
         shieldAbility = GetComponent<ShieldAbility>();
@@ -129,10 +147,23 @@ public class PlayerAbility : NetworkBehaviour
                 abilities[0].cooldownEndTime = Time.time + dashAbility.GetRemainingCooldown();
             }
             
-            if (strongJumpAbility != null) // Actualizado
+            if (strongJumpAbility != null)
             {
                 abilities[1].isReady = strongJumpAbility.isReady;
                 abilities[1].cooldownEndTime = Time.time + strongJumpAbility.GetRemainingCooldown();
+            }
+            
+            // Actualizar las habilidades nuevas específicamente
+            if (kineticShieldAbility != null)
+            {
+                abilities[2].isReady = kineticShieldAbility.isReady;
+                abilities[2].cooldownEndTime = Time.time + kineticShieldAbility.GetRemainingCooldown();
+            }
+            
+            if (missileAbility != null)
+            {
+                abilities[3].isReady = missileAbility.isReady;
+                abilities[3].cooldownEndTime = Time.time + missileAbility.GetRemainingCooldown();
             }
             
             // Actualizar las habilidades de powerup registradas
@@ -180,13 +211,32 @@ public class PlayerAbility : NetworkBehaviour
             dashAbility.icon = abilities[0].icon;
         }
         
-        if (strongJumpAbility != null && abilities[1] != null) // Actualizado
+        if (strongJumpAbility != null && abilities[1] != null)
         {
             strongJumpAbility.abilityName = abilities[1].name;
             strongJumpAbility.activationKey = abilities[1].activationKey;
             strongJumpAbility.manaCost = abilities[1].manaCost;
             strongJumpAbility.cooldown = abilities[1].cooldown;
             strongJumpAbility.icon = abilities[1].icon;
+        }
+        
+        // Sincronizar las nuevas habilidades
+        if (kineticShieldAbility != null && abilities[2] != null)
+        {
+            kineticShieldAbility.abilityName = abilities[2].name;
+            kineticShieldAbility.activationKey = abilities[2].activationKey;
+            kineticShieldAbility.manaCost = abilities[2].manaCost;
+            kineticShieldAbility.cooldown = abilities[2].cooldown;
+            kineticShieldAbility.icon = abilities[2].icon;
+        }
+        
+        if (missileAbility != null && abilities[3] != null)
+        {
+            missileAbility.abilityName = abilities[3].name;
+            missileAbility.activationKey = abilities[3].activationKey;
+            missileAbility.manaCost = abilities[3].manaCost;
+            missileAbility.cooldown = abilities[3].cooldown;
+            missileAbility.icon = abilities[3].icon;
         }
         
         // Sincronizar las habilidades de powerup si existen
@@ -229,6 +279,20 @@ public class PlayerAbility : NetworkBehaviour
         int powerUpIndex = slot - 2;
         powerUpAbilities[powerUpIndex] = ability;
         
+        // Si es KineticShield específicamente, guardar referencia directa
+        if (ability is KineticShieldAbility)
+        {
+            kineticShieldAbility = ability as KineticShieldAbility;
+            Debug.Log("[PlayerAbility] KineticShieldAbility guardado en referencia directa");
+        }
+        
+        // Si es SupersonicMissile específicamente, guardar referencia directa
+        if (ability is SupersonicMissileAbility)
+        {
+            missileAbility = ability as SupersonicMissileAbility;
+            Debug.Log("[PlayerAbility] SupersonicMissileAbility guardado en referencia directa");
+        }
+        
         // Si es Shield específicamente, guardar referencia directa también
         if (ability is ShieldAbility)
         {
@@ -253,7 +317,17 @@ public class PlayerAbility : NetworkBehaviour
         
         int powerUpIndex = slot - 2;
         
-        // Si es Shield, limpiar referencia directa
+        // Limpiar referencias directas según el tipo
+        if (powerUpAbilities[powerUpIndex] is KineticShieldAbility)
+        {
+            kineticShieldAbility = null;
+        }
+        
+        if (powerUpAbilities[powerUpIndex] is SupersonicMissileAbility)
+        {
+            missileAbility = null;
+        }
+        
         if (powerUpAbilities[powerUpIndex] is ShieldAbility)
         {
             shieldAbility = null;
@@ -267,9 +341,9 @@ public class PlayerAbility : NetworkBehaviour
     // Método público para verificar si el jugador está en pausa de impacto
     public bool IsInImpactPause()
     {
-        if (strongJumpAbility != null) // Actualizado
+        if (strongJumpAbility != null)
         {
-            return strongJumpAbility.IsImmobilized; // Cambiado para usar la propiedad adecuada
+            return strongJumpAbility.IsImmobilized;
         }
         return false;
     }
@@ -299,18 +373,24 @@ public class PlayerAbility : NetworkBehaviour
                         return dashAbility.GetRemainingCooldown();
                     break;
                     
-                case 1: // StrongJump (reemplazo de Terremoto)
+                case 1: // StrongJump
                     if (strongJumpAbility != null)
                         return strongJumpAbility.GetRemainingCooldown();
                     break;
                     
-                case 2: // Escudo u otra habilidad de powerup
-                    if (powerUpAbilities[0] != null)
+                case 2: // Escudo Cinético u otra habilidad de powerup
+                    if (kineticShieldAbility != null)
+                        return kineticShieldAbility.GetRemainingCooldown();
+                    else if (shieldAbility != null)
+                        return shieldAbility.GetRemainingCooldown();
+                    else if (powerUpAbilities[0] != null)
                         return powerUpAbilities[0].GetRemainingCooldown();
                     break;
                     
-                case 3: // Ultimate u otra habilidad de powerup
-                    if (powerUpAbilities[1] != null)
+                case 3: // Misil Supersónico u otra habilidad de powerup
+                    if (missileAbility != null)
+                        return missileAbility.GetRemainingCooldown();
+                    else if (powerUpAbilities[1] != null)
                         return powerUpAbilities[1].GetRemainingCooldown();
                     break;
             }

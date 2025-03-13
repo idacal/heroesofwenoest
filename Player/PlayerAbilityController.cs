@@ -68,39 +68,57 @@ public class PlayerAbilityController : NetworkBehaviour
     private IEnumerator DelayedInitialization()
     {
         yield return new WaitForSeconds(0.2f);
-        InitializeDefaultAbilities();
+        
+        // Verificar si tenemos un componente Hero
+        Hero heroComponent = GetComponent<Hero>();
+        if (heroComponent != null)
+        {
+            Debug.Log($"[PlayerAbilityController] Se encontró héroe {heroComponent.heroName}. Usando inicialización específica del héroe.");
+            // Si tenemos un Hero, usamos su método de inicialización específico
+            heroComponent.InitializeHeroAbilities();
+        }
+        else
+        {
+            Debug.Log("[PlayerAbilityController] No se encontró componente Hero. Usando inicialización por defecto.");
+            // Si no hay un Hero, usamos la inicialización por defecto
+            InitializeDefaultAbilities();
+        }
     }
     
-    // Localiza el método InitializeDefaultAbilities() en PlayerAbilityController.cs
-// y modifícalo para incluir la nueva habilidad:
-
-private void InitializeDefaultAbilities()
-{
-    // Limpiar cualquier habilidad existente para evitar duplicados
-    RemoveAllAbilities();
-    
-    // Añadir habilidades por defecto
-    dashAbility = AddAbility<DashAbility>();
-    //earthquakeAbility = AddAbility<EarthquakeAbility>();
-    
-    // Añadir la nueva habilidad StrongJump
-    AddAbility<StrongJumpAbility>();
-    
-    // Si quieres añadir más habilidades por defecto, hazlo aquí
-    // AddAbility<OtraHabilidad>();
-    
-    // Inicializar explícitamente cada habilidad con este NetworkBehaviour
-    foreach (var ability in activeAbilities)
+    private void InitializeDefaultAbilities()
     {
-        ability.Initialize(this);
+        // Limpiar cualquier habilidad existente para evitar duplicados
+        RemoveAllAbilities();
+        
+        // Buscar primero si tenemos un componente Hero
+        Hero heroComponent = GetComponent<Hero>();
+        if (heroComponent != null)
+        {
+            Debug.Log($"[PlayerAbilityController] Detectado héroe de tipo {heroComponent.GetType().Name}. No se aplicarán habilidades por defecto.");
+            // Si tenemos un Hero, no inicializamos las habilidades por defecto
+            // Permitimos que el sistema de héroes maneje la inicialización
+            return;
+        }
+        
+        // Si no hay un héroe específico, usamos habilidades por defecto
+        Debug.Log("[PlayerAbilityController] No se detectó héroe específico. Aplicando habilidades por defecto.");
+        
+        // Añadir habilidades por defecto solo si no hay un héroe específico
+        dashAbility = AddAbility<DashAbility>();
+        AddAbility<StrongJumpAbility>();
+        
+        // Inicializar explícitamente cada habilidad con este NetworkBehaviour
+        foreach (var ability in activeAbilities)
+        {
+            ability.Initialize(this);
+        }
+        
+        // Notificar que se inicializaron correctamente
+        if (IsOwner)
+        {
+            Debug.Log("[PlayerAbilityController] Habilidades por defecto inicializadas correctamente");
+        }
     }
-    
-    // Notificar que se inicializaron correctamente
-    if (IsOwner)
-    {
-        Debug.Log("[PlayerAbilityController] Habilidades inicializadas correctamente");
-    }
-}
     
     private void Update()
     {

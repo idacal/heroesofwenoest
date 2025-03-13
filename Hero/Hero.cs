@@ -16,7 +16,7 @@ public class Hero : NetworkBehaviour
     private NetworkVariable<int> heroLevel = new NetworkVariable<int>(
         1, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     
-    // References to other components
+    // Referencias de componentes
     protected PlayerNetwork playerNetwork;
     protected PlayerStats playerStats;
     protected PlayerAbilityController abilityController;
@@ -121,6 +121,23 @@ public class Hero : NetworkBehaviour
     {
         // Base update logic that applies to all heroes
         // Derived classes can override this to add hero-specific behavior
+    }
+    
+    // NUEVO: Método virtual para inicializar habilidades de héroe
+    public virtual void InitializeHeroAbilities()
+    {
+        // La implementación base no hace nada específico
+        Debug.Log($"[Hero] Inicialización genérica de habilidades para {heroName}");
+        
+        // Obtener el controlador de habilidades
+        PlayerAbilityController abilityController = GetComponent<PlayerAbilityController>();
+        if (abilityController == null) return;
+        
+        // Limpiar habilidades existentes
+        abilityController.RemoveAllAbilities();
+        
+        // En la clase base, podríamos añadir habilidades comunes a todos los héroes
+        // Pero dejamos que las clases derivadas definan sus propias habilidades específicas
     }
     
     // This method can be called when the hero's abilities should be activated based on game state

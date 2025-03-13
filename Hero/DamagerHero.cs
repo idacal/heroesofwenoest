@@ -10,9 +10,13 @@ public class DamagerHero : Hero
     [SerializeField] private float criticalChance = 0.1f;  // 10% base critical chance
     [SerializeField] private GameObject specialAttackEffect;
     
-    // References to specific abilities
+    // Referencias a habilidades específicas
     private DashAbility dashAbility;
     private StrongJumpAbility strongJumpAbility;
+    
+    // NUEVAS referencias a habilidades agregadas
+    private KineticShieldAbility kineticShieldAbility;
+    private SupersonicMissileAbility supersonicMissileAbility;
     
     // Custom network variable for this hero's special state
     private NetworkVariable<bool> isEnraged = new NetworkVariable<bool>(
@@ -45,6 +49,61 @@ public class DamagerHero : Hero
         {
             // Client-side initialization
             InitializeHeroClient();
+        }
+        
+        // NUEVO: Inicializar habilidades específicas de este héroe
+        if (IsServer || IsOwner)
+        {
+            InitializeHeroAbilities();
+        }
+    }
+    
+    // NUEVO: Sobrescribe el método de inicialización de habilidades
+    public override void InitializeHeroAbilities()
+    {
+        Debug.Log("[DamagerHero] Inicializando habilidades específicas para Striker");
+        
+        // Obtener el controlador de habilidades
+        if (abilityController != null)
+        {
+            // Limpiar cualquier habilidad que pueda haber sido añadida automáticamente
+            abilityController.RemoveAllAbilities();
+            
+            // Añadir habilidades específicas del Striker
+            dashAbility = abilityController.AddAbility<DashAbility>();
+            strongJumpAbility = abilityController.AddAbility<StrongJumpAbility>();
+            kineticShieldAbility = abilityController.AddAbility<KineticShieldAbility>();
+            supersonicMissileAbility = abilityController.AddAbility<SupersonicMissileAbility>();
+            
+            // Configurar habilidades con valores específicos para este héroe si es necesario
+            if (dashAbility != null)
+            {
+                // Ejemplo: ajustar cooldown para este héroe
+                // dashAbility.cooldown = 2.5f;
+            }
+            
+            if (kineticShieldAbility != null)
+            {
+                // Ejemplo: ajustar parámetros de escudo
+                // kineticShieldAbility.baseDamageReduction = 0.35f;
+            }
+            
+            if (supersonicMissileAbility != null)
+            {
+                // Ejemplo: configurar daño de misil
+                // supersonicMissileAbility.baseDamage = 120f;
+            }
+            
+            // Log para confirmar
+            Debug.Log("[DamagerHero] Habilidades inicializadas: " + 
+                      $"Dash: {dashAbility != null}, " +
+                      $"StrongJump: {strongJumpAbility != null}, " +
+                      $"KineticShield: {kineticShieldAbility != null}, " +
+                      $"SupersonicMissile: {supersonicMissileAbility != null}");
+        }
+        else
+        {
+            Debug.LogError("[DamagerHero] No se pudo encontrar PlayerAbilityController!");
         }
     }
     
@@ -85,6 +144,15 @@ public class DamagerHero : Hero
                 else if (ability is StrongJumpAbility)
                 {
                     strongJumpAbility = (StrongJumpAbility)ability;
+                }
+                // NUEVAS comprobaciones para las nuevas habilidades
+                else if (ability is KineticShieldAbility)
+                {
+                    kineticShieldAbility = (KineticShieldAbility)ability;
+                }
+                else if (ability is SupersonicMissileAbility)
+                {
+                    supersonicMissileAbility = (SupersonicMissileAbility)ability;
                 }
             }
         }
@@ -166,7 +234,7 @@ public class DamagerHero : Hero
         Debug.Log($"{heroName} activates special ability!");
     }
     
-    private void OnEnragedStateChanged(bool oldValue, bool newValue)
+private void OnEnragedStateChanged(bool oldValue, bool newValue)
     {
         // React to the enraged state changing
         if (newValue)
@@ -187,6 +255,21 @@ public class DamagerHero : Hero
                 SetAttackDamage(15f + (attackDamageBonus * GetHeroLevel() * 2)); // Double damage bonus
                 SetCriticalChance(criticalChance * 2); // Double crit chance
             }
+            
+            // NUEVO: Potenciar habilidades durante estado enfurecido
+            if (kineticShieldAbility != null)
+            {
+                // Por ejemplo: Hacer el escudo más fuerte cuando está enfurecido
+                // Nota: Deberías implementar estos métodos en KineticShieldAbility si quieres usarlos
+                // kineticShieldAbility.SetMaxDamageReduction(0.8f);
+            }
+            
+            if (supersonicMissileAbility != null)
+            {
+                // Por ejemplo: Hacer los misiles más potentes cuando está enfurecido
+                // Nota: Deberías implementar estos métodos en SupersonicMissileAbility si quieres usarlos
+                // supersonicMissileAbility.SetDamageMultiplier(2.0f);
+            }
         }
         else
         {
@@ -205,6 +288,19 @@ public class DamagerHero : Hero
                 // Revert to normal stats
                 SetAttackDamage(15f + (attackDamageBonus * GetHeroLevel()));
                 SetCriticalChance(criticalChance);
+            }
+            
+            // NUEVO: Restaurar habilidades a su potencia normal
+            if (kineticShieldAbility != null)
+            {
+                // Restaurar valores normales
+                // kineticShieldAbility.SetMaxDamageReduction(0.6f);
+            }
+            
+            if (supersonicMissileAbility != null)
+            {
+                // Restaurar valores normales
+                // supersonicMissileAbility.SetDamageMultiplier(1.0f);
             }
         }
     }
