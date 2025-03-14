@@ -18,6 +18,13 @@ public class PlayerRespawnController : NetworkBehaviour
     [SerializeField] private GameObject respawnEffectPrefab; // Efecto al reaparecer
     [SerializeField] private Material ghostMaterial; // Material semitransparente para invulnerabilidad
 
+    // NUEVO: Para monitoreo de visibilidad
+    [Header("Visibilidad")]
+    [SerializeField] private float visibilityCheckInterval = 2.0f; // Intervalo para verificar visibilidad
+    [SerializeField] private bool autoFixVisibility = true; // Arreglar automáticamente problemas de visibilidad
+    private float visibilityCheckTimer = 0f;
+    private int consecutiveInvisibleFrames = 0;
+
     // Variables de red
     private NetworkVariable<bool> isRespawning = new NetworkVariable<bool>(
         false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
@@ -47,6 +54,9 @@ public class PlayerRespawnController : NetworkBehaviour
     // Referencia a la cámara
     private MOBACamera playerCamera;
 
+    // NUEVO: Variable para rastrear si el jugador ha sido inicializado correctamente
+    private bool isPlayerInitialized = false;
+
     public override void OnNetworkSpawn()
     {
         base.OnNetworkSpawn();
@@ -56,7 +66,9 @@ public class PlayerRespawnController : NetworkBehaviour
         abilityController = GetComponent<PlayerAbilityController>();
         playerStats = GetComponent<PlayerStats>();
         playerCollider = GetComponent<Collider>();
-        playerRenderers = GetComponentsInChildren<Renderer>();
+        
+        // MODIFICADO: Obtener todos los renderers, incluyendo inactivos
+        playerRenderers = GetComponentsInChildren<Renderer>(true);
         
         // Buscar la cámara del jugador
         if (IsOwner)
@@ -90,6 +102,45 @@ public class PlayerRespawnController : NetworkBehaviour
         }
         
         Debug.Log($"[RespawnController] Inicializado para jugador {OwnerClientId}, Equipo {playerTeam.Value}");
+        
+        // NUEVO: Forzar visibilidad inmediatamente
+        ForceVisibility();
+        
+        // NUEVO: Marcar como inicializado
+        isPlayerInitialized = true;
+        
+        // NUEVO: Programar verificación continua de visibilidad
+        StartCoroutine(ContinuousVisibilityCheck());
+    }
+    
+    // NUEVO: Corrutina para verificación continua de visibilidad
+    private IEnumerator ContinuousVisibilityCheck()
+    {
+        // Esperar un momento para que todo se inicialice correctamente
+        yield return new WaitForSeconds(1.0f);
+        
+        // Número de verificaciones a realizar
+        int numChecks = 10;
+        
+        for (int i = 0; i < numChecks; i++)
+        {
+            // Forzar visibilidad en cada verificación
+            ForceVisibility();
+            
+            // Esperar antes de la siguiente verificación
+            yield return new WaitForSeconds(0.5f);
+        }
+        
+        // Continuar con verificaciones periódicas más espaciadas
+        while (true)
+        {
+            yield return new WaitForSeconds(2.0f);
+            
+            if (IsOwner && autoFixVisibility)
+            {
+                CheckAndFixVisibility();
+            }
+        }
     }
     
     private IEnumerator FindPlayerCamera()
@@ -119,6 +170,44 @@ public class PlayerRespawnController : NetworkBehaviour
         }
     }
     
+    // NUEVO: Método para verificar y arreglar problemas de visibilidad
+    private void CheckAndFixVisibility()
+    {
+        bool hasVisibleRenderers = false;
+        
+        // Actualizar la lista de renderers
+        playerRenderers = GetComponentsInChildren<Renderer>(true);
+        
+        // Verificar si hay algún renderer visible
+        foreach (var renderer in playerRenderers)
+        {
+            if (renderer != null && renderer.enabled && renderer.isVisible)
+            {
+                hasVisibleRenderers = true;
+                break;
+            }
+        }
+        
+        // Si no hay renderers visibles, forzar visibilidad
+        if (!hasVisibleRenderers)
+        {
+            consecutiveInvisibleFrames++;
+            
+            // Si ha estado invisible por varios frames consecutivos, intentar arreglar
+            if (consecutiveInvisibleFrames >= 3)
+            {
+                Debug.LogWarning($"[RespawnController] Jugador {OwnerClientId} invisible por {consecutiveInvisibleFrames} frames consecutivos. Forzando visibilidad.");
+                ForceVisibility();
+                consecutiveInvisibleFrames = 0;
+            }
+        }
+        else
+        {
+            // Resetear contador si es visible
+            consecutiveInvisibleFrames = 0;
+        }
+    }
+    
     private void Update()
     {
         // Solo verificar caídas si no estamos ya en proceso de respawn
@@ -144,6 +233,18 @@ public class PlayerRespawnController : NetworkBehaviour
                     // Si somos el cliente, notificar al servidor
                     NotifyFallServerRpc();
                 }
+            }
+        }
+        
+        // NUEVO: Verificar visibilidad periódicamente
+        if (IsOwner && autoFixVisibility && isPlayerInitialized)
+        {
+            visibilityCheckTimer += Time.deltaTime;
+            
+            if (visibilityCheckTimer >= visibilityCheckInterval)
+            {
+                visibilityCheckTimer = 0f;
+                CheckAndFixVisibility();
             }
         }
     }
@@ -363,23 +464,83 @@ public class PlayerRespawnController : NetworkBehaviour
         }
     }
     
-    // NUEVO: Método auxiliar para forzar la visibilidad
+    // MODIFICADO: Método ForceVisibility mejorado
     public void ForceVisibility()
     {
         // Asegurar que todo el objeto esté activo
         gameObject.SetActive(true);
         
-        // Activar todos los renderizadores
+        // Obtener todos los renderers, incluyendo objetos inactivos
         Renderer[] allRenderers = GetComponentsInChildren<Renderer>(true);
+        
+        // Contar cuántos renderers vamos a activar
+        int renderersToActivate = 0;
+        
         foreach (var renderer in allRenderers)
         {
-            renderer.enabled = true;
+            if (renderer != null)
+            {
+                // Activar el gameObject que contiene el renderer
+                if (!renderer.gameObject.activeSelf)
+                {
+                    renderer.gameObject.SetActive(true);
+                }
+                
+                // Activar el renderer si estaba desactivado
+                if (!renderer.enabled)
+                {
+                    renderer.enabled = true;
+                }
+                
+                renderersToActivate++;
+                
+                // Verificar si el material tiene alpha = 0
+                if (renderer.material != null && renderer.material.color.a < 0.1f)
+                {
+                    // Corregir alpha del material
+                    Color color = renderer.material.color;
+                    color.a = 1.0f;
+                    renderer.material.color = color;
+                }
+            }
         }
         
-        // Actualizar la lista de renderizadores
+        // Actualizar la lista de renderizadores para el objeto
         playerRenderers = GetComponentsInChildren<Renderer>();
         
-        Debug.Log($"[RespawnController] Forzando visibilidad del jugador. Renderizadores activados: {allRenderers.Length}");
+        // NUEVO: Verificar si el modelo tiene componentes SkinnedMeshRenderer (común en personajes)
+        SkinnedMeshRenderer[] skinnedRenderers = GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        foreach (var renderer in skinnedRenderers)
+        {
+            if (renderer != null)
+            {
+                renderer.enabled = true;
+                renderer.gameObject.SetActive(true);
+                
+                // Asegurar que el material sea visible
+                if (renderer.material != null)
+                {
+                    Color color = renderer.material.color;
+                    color.a = 1.0f;
+                    renderer.material.color = color;
+                }
+            }
+        }
+        
+        // Activar colliders explícitamente
+        Collider[] colliders = GetComponentsInChildren<Collider>(true);
+        foreach (var collider in colliders)
+        {
+            if (!collider.enabled)
+            {
+                collider.enabled = true;
+            }
+        }
+        
+        Debug.Log($"[RespawnController] Forzando visibilidad del jugador {OwnerClientId}. " +
+                 $"Renderizadores activados: {renderersToActivate}, " +
+                 $"SkinnedMeshRenderers: {skinnedRenderers.Length}, " +
+                 $"Colliders: {colliders.Length}");
     }
     
     // NUEVO: Método para verificar la colisión con el suelo

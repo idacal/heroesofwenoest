@@ -36,6 +36,16 @@ public class HeroSelectionUI : MonoBehaviour
     // Reference to the hero selection manager
     private HeroSelectionManager heroSelectionManager;
     
+    // Referencia al GameManager para verificar el estado del juego
+    private MOBAGameManager gameManager;
+    
+    // Variable para rastrear si el panel se ha ocultado permanentemente
+    private bool isPermanentlyHidden = false;
+    
+    // Temporizador para verificación periódica del estado del juego
+    private float gameStateCheckTimer = 0f;
+    private float gameStateCheckInterval = 1.0f;
+    
     // Track the currently selected hero index (local)
     private int selectedHeroIndex = -1;
     
@@ -48,6 +58,9 @@ public class HeroSelectionUI : MonoBehaviour
     // Contador para reintentos
     private int initRetries = 0;
     private const int MAX_RETRIES = 3;
+    
+    // Modificado: Añadido campo para rastrear intentos de ocultar
+    private int hideAttempts = 0;
     
     private void Awake()
     {
@@ -83,12 +96,61 @@ public class HeroSelectionUI : MonoBehaviour
         {
             Debug.LogError("[HeroSelectionUI] readyButton is null!");
         }
+        
+        // Buscar referencia al Game Manager
+        gameManager = FindObjectOfType<MOBAGameManager>();
     }
     
     private void OnEnable()
     {
         // Make sure canvas is properly configured when enabled
         EnsureProperCanvasSetup();
+    }
+    
+    private void Update()
+    {
+        // Verificar periódicamente el estado del juego para ocultar UI si es necesario
+        if (gameManager != null && !isPermanentlyHidden)
+        {
+            gameStateCheckTimer += Time.deltaTime;
+            
+            if (gameStateCheckTimer >= gameStateCheckInterval)
+            {
+                gameStateCheckTimer = 0f;
+                
+                // Si el juego ya ha comenzado, ocultar la UI permanentemente
+                if (gameManager.HasGameStarted())
+                {
+                    Debug.Log("[HeroSelectionUI] Juego iniciado detectado, ocultando UI permanentemente");
+                    HidePermanently();
+                }
+            }
+        }
+    }
+    
+    // NUEVO: Método para ocultar permanentemente la UI
+    public void HidePermanently()
+    {
+        if (isPermanentlyHidden)
+            return;
+            
+        isPermanentlyHidden = true;
+        
+        // Ocultar todos los elementos relacionados
+        Hide();
+        
+        // Desactivar completamente el GameObject
+        gameObject.SetActive(false);
+        
+        // Desactivar canvas si existe
+        Canvas canvas = GetComponentInParent<Canvas>();
+        if (canvas != null)
+        {
+            canvas.enabled = false;
+            canvas.gameObject.SetActive(false);
+        }
+        
+        Debug.Log("[HeroSelectionUI] UI de selección de héroe ocultada permanentemente");
     }
     
     private void EnsureProperCanvasSetup()
@@ -748,6 +810,13 @@ public class HeroSelectionUI : MonoBehaviour
     // Called by HeroSelectionManager to show this UI when needed
     public void Show()
     {
+        // No mostrar si ya se ha ocultado permanentemente
+        if (isPermanentlyHidden)
+        {
+            Debug.Log("[HeroSelectionUI] Intento de mostrar UI cuando está permanentemente oculta, ignorando");
+            return;
+        }
+        
         Debug.Log("[HeroSelectionUI] Show() called");
         
         // Hide all connection panels first
@@ -902,8 +971,13 @@ public class HeroSelectionUI : MonoBehaviour
         Canvas.ForceUpdateCanvases();
     }
     
+    // Modificado: método Hide para usar un enfoque más agresivo
     public void Hide()
     {
+        hideAttempts++;
+        Debug.Log($"[HeroSelectionUI] Hide() llamado (intento {hideAttempts})");
+        
+        // Desactivar panel principal
         if (heroSelectionPanel != null)
         {
             heroSelectionPanel.SetActive(false);
@@ -913,6 +987,64 @@ public class HeroSelectionUI : MonoBehaviour
         if (heroInfoPanel != null)
         {
             heroInfoPanel.SetActive(false);
+        }
+        
+        // NUEVO: Ocultar todos los objetos hijos
+        foreach (Transform child in transform)
+        {
+            child.gameObject.SetActive(false);
+        }
+        
+        // NUEVO: Desactivar también este GameObject si es un intento posterior
+        if (hideAttempts > 2)
+        {
+            gameObject.SetActive(false);
+            
+            // Desactivar canvas si existe
+            Canvas canvas = GetComponentInParent<Canvas>();
+            if (canvas != null)
+            {
+                canvas.enabled = false;
+                
+                // Solo desactivar el GameObject del canvas en intentos posteriores
+                if (hideAttempts > 3)
+                {
+                    canvas.gameObject.SetActive(false);
+                }
+            }
+        }
+        
+        // NUEVO: Programar verificación adicional para asegurar que permanezca oculto
+        if (hideAttempts <= 5)
+        {
+            StartCoroutine(VerifyHidden());
+        }
+    }
+    
+    // NUEVO: Método para verificar que la UI permanece oculta
+    private IEnumerator VerifyHidden()
+    {
+        yield return new WaitForSeconds(0.5f);
+        
+        // Verificar si la UI se ha vuelto a mostrar por alguna razón
+        if (heroSelectionPanel != null && heroSelectionPanel.activeSelf)
+        {
+            Debug.LogWarning("[HeroSelectionUI] Panel de selección de héroe se volvió a mostrar, ocultándolo nuevamente");
+            heroSelectionPanel.SetActive(false);
+        }
+        
+        // Verificar si este GameObject se ha vuelto a activar
+        if (gameObject.activeSelf && hideAttempts > 2)
+        {
+            Debug.LogWarning("[HeroSelectionUI] GameObject se volvió a activar, desactivándolo");
+            gameObject.SetActive(false);
+        }
+        
+        // Si el juego ha comenzado, intentar ocultar permanentemente
+        MOBAGameManager gameManager = FindObjectOfType<MOBAGameManager>();
+        if (gameManager != null && gameManager.HasGameStarted())
+        {
+            HidePermanently();
         }
     }
     
