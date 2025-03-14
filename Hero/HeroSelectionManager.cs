@@ -19,6 +19,7 @@ public class HeroSelectionManager : NetworkBehaviour
     [SerializeField] private float selectionTimeLimit = 30f; // Optional time limit for selection
     [SerializeField] private bool allowDuplicateHeroes = true; // Whether multiple players can select the same hero
     [SerializeField] private bool debugMode = true; // Enable additional debug logs
+    [SerializeField] private bool requireAllPlayersReady = true; // NUEVO: Esperar a que todos los jugadores estén listos
     
     // Network variables for syncing hero selections
     private NetworkVariable<float> selectionTimeRemaining = new NetworkVariable<float>(
@@ -34,6 +35,12 @@ public class HeroSelectionManager : NetworkBehaviour
     private int localSelectedHeroIndex = -1;
     private bool localPlayerReady = false;
     private bool networkListInitialized = false;
+    
+    // NUEVO: Variable para seguimiento de clientes
+    private NetworkVariable<int> readyPlayersCount = new NetworkVariable<int>(
+        0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+    private NetworkVariable<int> totalPlayersCount = new NetworkVariable<int>(
+        0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     
     // Awake is called when the script instance is being loaded
     private void Awake()
@@ -61,6 +68,10 @@ public class HeroSelectionManager : NetworkBehaviour
         // Subscribe to selection changes
         playerSelections.OnListChanged += OnPlayerSelectionsChanged;
         
+        // Subscribe to player count changes
+        readyPlayersCount.OnValueChanged += OnReadyPlayersCountChanged;
+        totalPlayersCount.OnValueChanged += OnTotalPlayersCountChanged;
+        
         if (IsServer)
         {
             Debug.Log("[HeroSelectionManager] Initializing selection phase as server");
@@ -79,6 +90,7 @@ public class HeroSelectionManager : NetworkBehaviour
             
             if (heroSelectionUI != null)
             {
+                heroSelectionUI.gameObject.SetActive(true);
                 heroSelectionUI.Show();
             }
             else
@@ -88,6 +100,7 @@ public class HeroSelectionManager : NetworkBehaviour
                 heroSelectionUI = FindObjectOfType<HeroSelectionUI>();
                 if (heroSelectionUI != null)
                 {
+                    heroSelectionUI.gameObject.SetActive(true);
                     heroSelectionUI.Show();
                 }
             }
@@ -100,6 +113,68 @@ public class HeroSelectionManager : NetworkBehaviour
             if (debugMode)
             {
                 LogAvailableHeroes();
+            }
+            
+            // Update UI with available heroes
+            StartCoroutine(DelayedUpdateUI());
+        }
+    }
+    
+    // NUEVO: Método para actualizar la UI después de un delay
+    private System.Collections.IEnumerator DelayedUpdateUI()
+    {
+        // Wait a moment for network sync
+        yield return new WaitForSeconds(1.0f);
+        
+        // Update UI
+        if (heroSelectionUI != null)
+        {
+            UpdateHeroSelectionUI();
+        }
+        else
+        {
+            // Try to find it again
+            heroSelectionUI = FindObjectOfType<HeroSelectionUI>();
+            if (heroSelectionUI != null)
+            {
+                heroSelectionUI.gameObject.SetActive(true);
+                heroSelectionUI.Show();
+                UpdateHeroSelectionUI();
+            }
+        }
+        
+        // NUEVO: Forzar la visibilidad del panel y asegurar que los botones son clickeables
+        if (heroSelectionUI != null)
+        {
+            heroSelectionUI.ForceAllUIElementsActive();
+        }
+    }
+    
+    // NUEVO: Métodos para manejar cambios en contadores de jugadores
+    private void OnReadyPlayersCountChanged(int previousValue, int newValue)
+    {
+        Debug.Log($"[HeroSelectionManager] Ready players: {newValue}/{totalPlayersCount.Value}");
+        
+        if (IsClient && !IsServer)
+        {
+            // Actualizar UI con información de jugadores listos
+            if (heroSelectionUI != null && heroSelectionUI.selectionInfoText != null)
+            {
+                heroSelectionUI.selectionInfoText.text = $"Jugadores listos: {newValue}/{totalPlayersCount.Value}";
+            }
+        }
+    }
+    
+    private void OnTotalPlayersCountChanged(int previousValue, int newValue)
+    {
+        Debug.Log($"[HeroSelectionManager] Total players: {newValue}");
+        
+        if (IsClient && !IsServer)
+        {
+            // Actualizar UI con información de jugadores totales
+            if (heroSelectionUI != null && heroSelectionUI.selectionInfoText != null)
+            {
+                heroSelectionUI.selectionInfoText.text = $"Jugadores conectados: {readyPlayersCount.Value}/{newValue}";
             }
         }
     }
@@ -139,6 +214,10 @@ public class HeroSelectionManager : NetworkBehaviour
             }
         }
         
+        // Unsubscribe from count events
+        readyPlayersCount.OnValueChanged -= OnReadyPlayersCountChanged;
+        totalPlayersCount.OnValueChanged -= OnTotalPlayersCountChanged;
+        
         Debug.Log("[HeroSelectionManager] OnNetworkDespawn cleanup completed");
     }
     
@@ -153,6 +232,13 @@ public class HeroSelectionManager : NetworkBehaviour
             }
             catch (System.Exception) { /* Ignore any errors here */ }
         }
+        
+        // Unsubscribe from count events
+        try {
+            readyPlayersCount.OnValueChanged -= OnReadyPlayersCountChanged;
+            totalPlayersCount.OnValueChanged -= OnTotalPlayersCountChanged;
+        }
+        catch (System.Exception) { /* Ignore any errors here */ }
     }
     
     public void OnDestroy()
@@ -230,7 +316,11 @@ public class HeroSelectionManager : NetworkBehaviour
             // Clear the player hero selections dictionary
             playerHeroSelections.Clear();
             
+            // Reiniciar contadores
+            readyPlayersCount.Value = 0;
+            
             // Add initial entries for all connected players
+            int connectedCount = 0;
             foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
             {
                 playerSelections.Add(new PlayerHeroSelection 
@@ -240,8 +330,12 @@ public class HeroSelectionManager : NetworkBehaviour
                     isReady = false
                 });
                 
+                connectedCount++;
                 Debug.Log($"[HeroSelectionManager] Added player {clientId} to selection tracker");
             }
+            
+            // Actualizar contador total
+            totalPlayersCount.Value = connectedCount;
             
             // Start the selection timer
             if (selectionTimeLimit > 0)
@@ -279,6 +373,9 @@ public class HeroSelectionManager : NetworkBehaviour
                     selection.isReady = true;
                     anyConfirmationForced = true;
                     NotifyForcedSelectionClientRpc(selection.clientId, selection.selectedHeroIndex);
+                    
+                    // Incrementar contador de jugadores listos
+                    readyPlayersCount.Value++;
                 }
                 
                 // Update in the list
@@ -429,23 +526,30 @@ public class HeroSelectionManager : NetworkBehaviour
                 // Ensure they have a valid selection
                 if (playerSelections[i].selectedHeroIndex >= 0)
                 {
-                    // Update ready state
+                    // Update ready state only if not already ready
                     PlayerHeroSelection selection = playerSelections[i];
-                    selection.isReady = true;
-                    playerSelections[i] = selection;
                     
-                    // ADDED: Additional verification
-                    int heroIndex = selection.selectedHeroIndex;
-                    Debug.Log($"[HeroSelectionManager] Client {clientId} confirmed hero with index {heroIndex}");
-                    
-                    // Verify hero availability
-                    if (availableHeroes != null && heroIndex < availableHeroes.Length && availableHeroes[heroIndex] != null)
+                    if (!selection.isReady)
                     {
-                        Debug.Log($"[HeroSelectionManager] Confirmed hero: {availableHeroes[heroIndex].heroName}");
-                    }
-                    else
-                    {
-                        Debug.LogError($"[HeroSelectionManager] Error: Hero index {heroIndex} not available in availableHeroes");
+                        selection.isReady = true;
+                        playerSelections[i] = selection;
+                        
+                        // NUEVO: Incrementar contador de jugadores listos
+                        readyPlayersCount.Value++;
+                        
+                        // ADDED: Additional verification
+                        int heroIndex = selection.selectedHeroIndex;
+                        Debug.Log($"[HeroSelectionManager] Client {clientId} confirmed hero with index {heroIndex}");
+                        
+                        // Verify hero availability
+                        if (availableHeroes != null && heroIndex < availableHeroes.Length && availableHeroes[heroIndex] != null)
+                        {
+                            Debug.Log($"[HeroSelectionManager] Confirmed hero: {availableHeroes[heroIndex].heroName}");
+                        }
+                        else
+                        {
+                            Debug.LogError($"[HeroSelectionManager] Error: Hero index {heroIndex} not available in availableHeroes");
+                        }
                     }
                     
                     // Check if all players are ready
@@ -510,9 +614,12 @@ public class HeroSelectionManager : NetworkBehaviour
         
         Debug.Log($"[HeroSelectionManager] Player readiness: {readyCount}/{totalPlayers} ready");
         
-        if (allReady)
+        // NUEVO: Verificar requisito de todos listos o solo suficientes para iniciar
+        bool shouldStartGame = requireAllPlayersReady ? allReady : (readyCount >= 1);
+        
+        if (shouldStartGame)
         {
-            Debug.Log("[HeroSelectionManager] All players are ready! Starting the game...");
+            Debug.Log("[HeroSelectionManager] Condiciones de inicio cumplidas. Iniciando el juego...");
             StartGame();
         }
         else if (readyCount > 0)
@@ -550,8 +657,19 @@ public class HeroSelectionManager : NetworkBehaviour
             playerHeroSelections = new Dictionary<ulong, int>();
             foreach (var selection in playerSelections)
             {
-                playerHeroSelections[selection.clientId] = selection.selectedHeroIndex;
-                Debug.Log($"[HeroSelectionManager] Player {selection.clientId} selected hero index: {selection.selectedHeroIndex}");
+                // NUEVO: Solo incluir jugadores que están listos
+                if (selection.isReady)
+                {
+                    playerHeroSelections[selection.clientId] = selection.selectedHeroIndex;
+                    Debug.Log($"[HeroSelectionManager] Player {selection.clientId} selected hero index: {selection.selectedHeroIndex}");
+                }
+            }
+            
+            // NUEVO: Log adicional para depuración
+            Debug.Log($"[HeroSelectionManager] Starting game with {playerHeroSelections.Count} players");
+            foreach (var kvp in playerHeroSelections)
+            {
+                Debug.Log($"[HeroSelectionManager] Player ID: {kvp.Key}, Hero Index: {kvp.Value}");
             }
             
             // Tell the game manager to spawn players with their selected heroes
@@ -567,7 +685,11 @@ public class HeroSelectionManager : NetworkBehaviour
                 Dictionary<ulong, int> playerHeroSelections = new Dictionary<ulong, int>();
                 foreach (var selection in playerSelections)
                 {
-                    playerHeroSelections[selection.clientId] = selection.selectedHeroIndex;
+                    // NUEVO: Solo incluir jugadores que están listos
+                    if (selection.isReady)
+                    {
+                        playerHeroSelections[selection.clientId] = selection.selectedHeroIndex;
+                    }
                 }
                 gameManager.StartGameWithHeroSelections(playerHeroSelections);
             }

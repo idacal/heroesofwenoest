@@ -11,7 +11,7 @@ public class HeroSelectionUI : MonoBehaviour
     [SerializeField] private GameObject heroSelectionPanel;
     [SerializeField] private Button[] heroButtons;
     [SerializeField] private Button readyButton;
-    [SerializeField] private TextMeshProUGUI selectionInfoText;
+    [SerializeField] public TextMeshProUGUI selectionInfoText; // NUEVO: Cambiado a público
     [SerializeField] private TextMeshProUGUI timerText;
     
     [Header("Hero Info Panel")]
@@ -308,222 +308,277 @@ public class HeroSelectionUI : MonoBehaviour
     }
     
     private void SetupHeroButtons()
-{
-    Debug.Log("[HeroSelectionUI] Setting up hero buttons. Count: " + (heroButtons != null ? heroButtons.Length : 0));
-    
-    // Set up click handlers for each hero button
-    if (heroButtons == null)
     {
-        Debug.LogError("[HeroSelectionUI] heroButtons array is null!");
-        return;
-    }
-    
-    for (int i = 0; i < heroButtons.Length; i++)
-    {
-        if (heroButtons[i] != null)
+        Debug.Log("[HeroSelectionUI] Setting up hero buttons. Count: " + (heroButtons != null ? heroButtons.Length : 0));
+        
+        // Set up click handlers for each hero button
+        if (heroButtons == null)
         {
-            int heroIndex = i; // Need to capture the index for the lambda
-            
-            // Remuevo los listeners existentes
-            heroButtons[i].onClick.RemoveAllListeners();
-            
-            // Añado un nuevo listener con un debug explícito
-            heroButtons[i].onClick.AddListener(() => {
-                Debug.Log($"[HeroSelectionUI] Hero button {heroIndex} clicked!");
-                OnHeroButtonClicked(heroIndex);
-            });
-            
-            // Verificar si el héroe existe en el manager
-            if (heroSelectionManager != null)
+            Debug.LogError("[HeroSelectionUI] heroButtons array is null!");
+            return;
+        }
+        
+        for (int i = 0; i < heroButtons.Length; i++)
+        {
+            if (heroButtons[i] != null)
             {
-                // Intentamos obtener HeroDefinition primero (nuevo sistema)
-                HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(i);
+                int heroIndex = i; // Need to capture the index for the lambda
                 
-                if (heroDefinition != null)
+                // Remuevo los listeners existentes
+                heroButtons[i].onClick.RemoveAllListeners();
+                
+                // Añado un nuevo listener con un debug explícito
+                heroButtons[i].onClick.AddListener(() => {
+                    Debug.Log($"[HeroSelectionUI] Hero button {heroIndex} clicked!");
+                    OnHeroButtonClicked(heroIndex);
+                });
+                
+                // Verificar si el héroe existe en el manager
+                if (heroSelectionManager != null)
                 {
-                    // Configurar la visualización del botón con datos reales
-                    ConfigureHeroButton(heroButtons[i], heroDefinition);
-                }
-                else
-                {
-                    // Fallback al sistema anterior si necesario
-                    HeroData heroData = heroSelectionManager.GetHeroData(i);
-                    if (heroData != null)
+                    // Intentamos obtener HeroDefinition primero (nuevo sistema)
+                    HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(i);
+                    
+                    if (heroDefinition != null)
                     {
-                        // Crear una definición temporal basada en HeroData
-                        HeroDefinition tempDefinition = ScriptableObject.CreateInstance<HeroDefinition>();
-                        tempDefinition.heroName = heroData.heroName;
-                        tempDefinition.portrait = heroData.portrait;
-                        tempDefinition.heroClass = heroData.heroClass;
-                        
-                        // Usar la definición temporal
-                        ConfigureHeroButton(heroButtons[i], tempDefinition);
-                        
-                        Debug.LogWarning($"[HeroSelectionUI] Usando HeroData convertido para índice {i}. Considere migrar a HeroDefinition.");
+                        // Configurar la visualización del botón con datos reales
+                        ConfigureHeroButton(heroButtons[i], heroDefinition);
                     }
                     else
                     {
-                        Debug.LogWarning($"[HeroSelectionUI] No hero data for index {i}");
+                        // Fallback al sistema anterior si necesario
+                        HeroData heroData = heroSelectionManager.GetHeroData(i);
+                        if (heroData != null)
+                        {
+                            // Crear una definición temporal basada en HeroData
+                            HeroDefinition tempDefinition = ScriptableObject.CreateInstance<HeroDefinition>();
+                            tempDefinition.heroName = heroData.heroName;
+                            tempDefinition.portrait = heroData.portrait;
+                            tempDefinition.heroClass = heroData.heroClass;
+                            
+                            // Usar la definición temporal
+                            ConfigureHeroButton(heroButtons[i], tempDefinition);
+                            
+                            Debug.LogWarning($"[HeroSelectionUI] Usando HeroData convertido para índice {i}. Considere migrar a HeroDefinition.");
+                        }
+                        else
+                        {
+                            Debug.LogWarning($"[HeroSelectionUI] No hero data for index {i}");
+                        }
                     }
                 }
-            }
-            
-            Debug.Log($"[HeroSelectionUI] Hero button {i} listener set up");
-        }
-        else
-        {
-            Debug.LogError($"[HeroSelectionUI] Hero button at index {i} is null!");
-        }
-    }
-}
-    
-private void ConfigureHeroButton(Button button, HeroDefinition heroDefinition)
-{
-    // Configurar el botón con datos del héroe
-    if (button != null && heroDefinition != null)
-    {
-        // Buscar componentes en el botón
-        TextMeshProUGUI buttonText = button.GetComponentInChildren<TextMeshProUGUI>();
-        Image buttonImage = button.GetComponentInChildren<Image>();
-        
-        // Configurar texto si existe
-        if (buttonText != null)
-        {
-            buttonText.text = heroDefinition.heroName;
-        }
-        
-        // Configurar imagen si existe y hay retrato
-        if (buttonImage != null && heroDefinition.portrait != null)
-        {
-            buttonImage.sprite = heroDefinition.portrait;
-            buttonImage.preserveAspect = true;
-        }
-        
-        // Make sure raycast target is enabled
-        if (buttonImage != null)
-        {
-            buttonImage.raycastTarget = true;
-        }
-        
-        // Hacer el botón interactivo
-        button.interactable = true;
-    }
-}
-    
-    public void OnHeroButtonClicked(int heroIndex)
-{
-    Debug.Log($"[HeroSelectionUI] OnHeroButtonClicked: {heroIndex}");
-    
-    // Update the local selection
-    selectedHeroIndex = heroIndex;
-    
-    // Update UI to show this hero is selected
-    UpdateHeroSelectionUI(heroIndex);
-    
-    // Enable the ready button since we've selected a hero
-    if (readyButton != null)
-    {
-        readyButton.interactable = true;
-    }
-    
-    // Show detailed info about this hero
-    DisplayHeroInfo(heroIndex);
-    
-    // Tell the selection manager about our choice (but don't confirm yet)
-    if (heroSelectionManager != null)
-    {
-        heroSelectionManager.SelectHero(heroIndex);
-        
-        // Actualizar el texto informativo
-        if (selectionInfoText != null)
-        {
-            // Intentar usar HeroDefinition primero
-            HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(heroIndex);
-            
-            if (heroDefinition != null)
-            {
-                selectionInfoText.text = $"Selected: {heroDefinition.heroName}\nClick 'Ready' to confirm";
+                
+                Debug.Log($"[HeroSelectionUI] Hero button {i} listener set up");
             }
             else
             {
-                // Fallback a HeroData
-                HeroData heroData = heroSelectionManager.GetHeroData(heroIndex);
-                if (heroData != null)
-                {
-                    selectionInfoText.text = $"Selected: {heroData.heroName}\nClick 'Ready' to confirm";
-                }
-                else
-                {
-                    selectionInfoText.text = "Selected a hero. Click 'Ready' to confirm";
-                }
+                Debug.LogError($"[HeroSelectionUI] Hero button at index {i} is null!");
             }
         }
     }
-    else
+    
+    private void ConfigureHeroButton(Button button, HeroDefinition heroDefinition)
     {
-        Debug.LogError("[HeroSelectionUI] heroSelectionManager is null! Cannot select hero.");
-        // Try to find it again
-        heroSelectionManager = FindObjectOfType<HeroSelectionManager>();
+        // Configurar el botón con datos del héroe
+        if (button != null && heroDefinition != null)
+        {
+            // Buscar componentes en el botón
+            TextMeshProUGUI buttonText = button.GetComponentInChildren<TextMeshProUGUI>();
+            Image buttonImage = button.GetComponentInChildren<Image>();
+            
+            // Configurar texto si existe
+            if (buttonText != null)
+            {
+                buttonText.text = heroDefinition.heroName;
+            }
+            
+            // Configurar imagen si existe y hay retrato
+            if (buttonImage != null && heroDefinition.portrait != null)
+            {
+                buttonImage.sprite = heroDefinition.portrait;
+                buttonImage.preserveAspect = true;
+            }
+            
+            // Make sure raycast target is enabled
+            if (buttonImage != null)
+            {
+                buttonImage.raycastTarget = true;
+            }
+            
+            // Hacer el botón interactivo
+            button.interactable = true;
+        }
+    }
+    
+    // NUEVO: Método para forzar la activación de todos los elementos de UI
+    public void ForceAllUIElementsActive()
+    {
+        Debug.Log("[HeroSelectionUI] ForceAllUIElementsActive called");
+        
+        // Forzar activación del GameObject principal
+        gameObject.SetActive(true);
+        
+        // Forzar activación del panel principal
+        if (heroSelectionPanel != null)
+        {
+            heroSelectionPanel.SetActive(true);
+        }
+        
+        // Activar todos los elementos hijos
+        foreach (Transform child in transform)
+        {
+            child.gameObject.SetActive(true);
+        }
+        
+        // Asegurar que todos los botones sean interactivos
+        if (heroButtons != null)
+        {
+            foreach (var button in heroButtons)
+            {
+                if (button != null)
+                {
+                    button.interactable = true;
+                    
+                    // Asegurar que la imagen es raycstTarget
+                    Image buttonImage = button.GetComponent<Image>();
+                    if (buttonImage != null)
+                    {
+                        buttonImage.raycastTarget = true;
+                    }
+                }
+            }
+        }
+        
+        // Asegurar que el botón Ready está accesible
+        if (readyButton != null)
+        {
+            readyButton.gameObject.SetActive(true);
+            // No habilitarlo hasta que se seleccione un héroe
+            // readyButton.interactable = true;
+        }
+        
+        // Reset de UI state
+        UpdateHeroSelectionUI(-1);
+        if (selectionInfoText != null)
+        {
+            selectionInfoText.text = "Selecciona un héroe";
+        }
+    }
+    
+    public void OnHeroButtonClicked(int heroIndex)
+    {
+        Debug.Log($"[HeroSelectionUI] OnHeroButtonClicked: {heroIndex}");
+        
+        // Update the local selection
+        selectedHeroIndex = heroIndex;
+        
+        // Update UI to show this hero is selected
+        UpdateHeroSelectionUI(heroIndex);
+        
+        // Enable the ready button since we've selected a hero
+        if (readyButton != null)
+        {
+            readyButton.interactable = true;
+        }
+        
+        // Show detailed info about this hero
+        DisplayHeroInfo(heroIndex);
+        
+        // Tell the selection manager about our choice (but don't confirm yet)
         if (heroSelectionManager != null)
         {
             heroSelectionManager.SelectHero(heroIndex);
-        }
-    }
-}
-    
-    private void OnReadyButtonClicked()
-{
-    Debug.Log("Ready button clicked with selected hero: " + selectedHeroIndex);
-    
-    // Confirm our hero selection
-    if (selectedHeroIndex >= 0)
-    {
-        if (heroSelectionManager != null)
-        {
-            // Notify the manager that we're ready with our hero selection
-            heroSelectionManager.ConfirmHeroSelection();
             
-            // Disable the ready button and hero selection buttons
-            readyButton.interactable = false;
-            DisableHeroButtons();
-            
-            // Update info text
+            // Actualizar el texto informativo
             if (selectionInfoText != null)
             {
-                // Intentar obtener HeroDefinition primero
-                HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(selectedHeroIndex);
+                // Intentar usar HeroDefinition primero
+                HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(heroIndex);
                 
                 if (heroDefinition != null)
                 {
-                    selectionInfoText.text = $"Ready with {heroDefinition.heroName}!\nWaiting for other players...";
+                    selectionInfoText.text = $"Selected: {heroDefinition.heroName}\nClick 'Ready' to confirm";
                 }
                 else
                 {
-                    // Intentar HeroData como fallback
-                    HeroData heroData = heroSelectionManager.GetHeroData(selectedHeroIndex);
+                    // Fallback a HeroData
+                    HeroData heroData = heroSelectionManager.GetHeroData(heroIndex);
                     if (heroData != null)
                     {
-                        selectionInfoText.text = $"Ready with {heroData.heroName}!\nWaiting for other players...";
+                        selectionInfoText.text = $"Selected: {heroData.heroName}\nClick 'Ready' to confirm";
                     }
                     else
                     {
-                        selectionInfoText.text = "Ready! Waiting for other players...";
+                        selectionInfoText.text = "Selected a hero. Click 'Ready' to confirm";
                     }
                 }
             }
         }
         else
         {
-            Debug.LogError("[HeroSelectionUI] heroSelectionManager is null! Cannot confirm selection.");
+            Debug.LogError("[HeroSelectionUI] heroSelectionManager is null! Cannot select hero.");
             // Try to find it again
             heroSelectionManager = FindObjectOfType<HeroSelectionManager>();
             if (heroSelectionManager != null)
             {
-                heroSelectionManager.ConfirmHeroSelection();
+                heroSelectionManager.SelectHero(heroIndex);
             }
         }
     }
-}
+    
+    private void OnReadyButtonClicked()
+    {
+        Debug.Log("Ready button clicked with selected hero: " + selectedHeroIndex);
+        
+        // Confirm our hero selection
+        if (selectedHeroIndex >= 0)
+        {
+            if (heroSelectionManager != null)
+            {
+                // Notify the manager that we're ready with our hero selection
+                heroSelectionManager.ConfirmHeroSelection();
+                
+                // Disable the ready button and hero selection buttons
+                readyButton.interactable = false;
+                DisableHeroButtons();
+                
+                // Update info text
+                if (selectionInfoText != null)
+                {
+                    // Intentar obtener HeroDefinition primero
+                    HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(selectedHeroIndex);
+                    
+                    if (heroDefinition != null)
+                    {
+                        selectionInfoText.text = $"Ready with {heroDefinition.heroName}!\nWaiting for other players...";
+                    }
+                    else
+                    {
+                        // Intentar HeroData como fallback
+                        HeroData heroData = heroSelectionManager.GetHeroData(selectedHeroIndex);
+                        if (heroData != null)
+                        {
+                            selectionInfoText.text = $"Ready with {heroData.heroName}!\nWaiting for other players...";
+                        }
+                        else
+                        {
+                            selectionInfoText.text = "Ready! Waiting for other players...";
+                        }
+                    }
+                }
+            }
+            else
+            {
+                Debug.LogError("[HeroSelectionUI] heroSelectionManager is null! Cannot confirm selection.");
+                // Try to find it again
+                heroSelectionManager = FindObjectOfType<HeroSelectionManager>();
+                if (heroSelectionManager != null)
+                {
+                    heroSelectionManager.ConfirmHeroSelection();
+                }
+            }
+        }
+    }
     
     private void UpdateHeroSelectionUI(int heroIndex)
     {
@@ -576,119 +631,119 @@ private void ConfigureHeroButton(Button button, HeroDefinition heroDefinition)
     }
     
     private void DisplayHeroInfo(int heroIndex)
-{
-    Debug.Log($"[HeroSelectionUI] DisplayHeroInfo for hero index: {heroIndex}");
-    
-    if (heroInfoPanel != null && heroSelectionManager != null)
     {
-        // Primero intenta obtener HeroDefinition (nuevo sistema)
-        HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(heroIndex);
+        Debug.Log($"[HeroSelectionUI] DisplayHeroInfo for hero index: {heroIndex}");
         
-        if (heroDefinition != null)
+        if (heroInfoPanel != null && heroSelectionManager != null)
         {
-            // Show the info panel
-            heroInfoPanel.SetActive(true);
+            // Primero intenta obtener HeroDefinition (nuevo sistema)
+            HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(heroIndex);
             
-            // Set hero details
-            if (heroNameText != null) heroNameText.text = heroDefinition.heroName;
-            if (heroDescriptionText != null) heroDescriptionText.text = heroDefinition.description;
-            
-            if (heroPortrait != null)
-            {
-                heroPortrait.sprite = heroDefinition.portrait;
-                heroPortrait.preserveAspect = true;
-                Debug.Log($"[HeroSelectionUI] Set portrait: {(heroDefinition.portrait != null ? heroDefinition.portrait.name : "null")}");
-            }
-            
-            // Update ability info from HeroDefinition's abilities
-            for (int i = 0; i < abilityIcons.Length && i < heroDefinition.abilities.Count; i++)
-            {
-                var abilityDef = heroDefinition.abilities[i];
-                
-                if (abilityIcons[i] != null && abilityDef != null)
-                {
-                    abilityIcons[i].sprite = abilityDef.icon;
-                    abilityIcons[i].preserveAspect = true;
-                    abilityIcons[i].gameObject.SetActive(true);
-                }
-                
-                if (abilityNames != null && i < abilityNames.Length && abilityNames[i] != null && abilityDef != null)
-                {
-                    abilityNames[i].text = abilityDef.abilityName;
-                }
-                
-                if (abilityDescriptions != null && i < abilityDescriptions.Length && abilityDescriptions[i] != null)
-                {
-                    // Note: HeroDefinition doesn't have description for abilities, so we can use the name or leave empty
-                    abilityDescriptions[i].text = abilityDef.abilityName;
-                }
-            }
-        }
-        else
-        {
-            // FALLBACK: si no hay HeroDefinition, intenta usar el viejo sistema HeroData
-            HeroData heroData = heroSelectionManager.GetHeroData(heroIndex);
-            
-            if (heroData != null)
+            if (heroDefinition != null)
             {
                 // Show the info panel
                 heroInfoPanel.SetActive(true);
                 
                 // Set hero details
-                if (heroNameText != null) heroNameText.text = heroData.heroName;
-                if (heroDescriptionText != null) heroDescriptionText.text = heroData.description;
+                if (heroNameText != null) heroNameText.text = heroDefinition.heroName;
+                if (heroDescriptionText != null) heroDescriptionText.text = heroDefinition.description;
                 
                 if (heroPortrait != null)
                 {
-                    heroPortrait.sprite = heroData.portrait;
+                    heroPortrait.sprite = heroDefinition.portrait;
                     heroPortrait.preserveAspect = true;
-                    Debug.Log($"[HeroSelectionUI] Set portrait using legacy HeroData: {(heroData.portrait != null ? heroData.portrait.name : "null")}");
+                    Debug.Log($"[HeroSelectionUI] Set portrait: {(heroDefinition.portrait != null ? heroDefinition.portrait.name : "null")}");
                 }
                 
-                // Update ability info
-                for (int i = 0; i < abilityIcons.Length && i < heroData.abilities.Length; i++)
+                // Update ability info from HeroDefinition's abilities
+                for (int i = 0; i < abilityIcons.Length && i < heroDefinition.abilities.Count; i++)
                 {
-                    if (abilityIcons[i] != null && heroData.abilities[i] != null)
+                    var abilityDef = heroDefinition.abilities[i];
+                    
+                    if (abilityIcons[i] != null && abilityDef != null)
                     {
-                        abilityIcons[i].sprite = heroData.abilities[i].icon;
+                        abilityIcons[i].sprite = abilityDef.icon;
                         abilityIcons[i].preserveAspect = true;
                         abilityIcons[i].gameObject.SetActive(true);
                     }
                     
-                    if (abilityNames != null && i < abilityNames.Length && abilityNames[i] != null && heroData.abilities[i] != null)
+                    if (abilityNames != null && i < abilityNames.Length && abilityNames[i] != null && abilityDef != null)
                     {
-                        abilityNames[i].text = heroData.abilities[i].abilityName;
+                        abilityNames[i].text = abilityDef.abilityName;
                     }
                     
-                    if (abilityDescriptions != null && i < abilityDescriptions.Length && abilityDescriptions[i] != null && heroData.abilities[i] != null)
+                    if (abilityDescriptions != null && i < abilityDescriptions.Length && abilityDescriptions[i] != null)
                     {
-                        abilityDescriptions[i].text = heroData.abilities[i].description;
+                        // Note: HeroDefinition doesn't have description for abilities, so we can use the name or leave empty
+                        abilityDescriptions[i].text = abilityDef.abilityName;
                     }
                 }
             }
             else
             {
-                Debug.LogError($"[HeroSelectionUI] No hero data found for index: {heroIndex} (both HeroDefinition and HeroData are null)");
+                // FALLBACK: si no hay HeroDefinition, intenta usar el viejo sistema HeroData
+                HeroData heroData = heroSelectionManager.GetHeroData(heroIndex);
                 
-                // Mostrar un mensaje de error en el panel
-                if (heroNameText != null) heroNameText.text = "Hero Not Found";
-                if (heroDescriptionText != null) heroDescriptionText.text = "Could not load hero data for index " + heroIndex;
-                
-                // Ocultar iconos de habilidades
-                for (int i = 0; i < abilityIcons.Length; i++)
+                if (heroData != null)
                 {
-                    if (abilityIcons[i] != null)
-                        abilityIcons[i].gameObject.SetActive(false);
+                    // Show the info panel
+                    heroInfoPanel.SetActive(true);
+                    
+                    // Set hero details
+                    if (heroNameText != null) heroNameText.text = heroData.heroName;
+                    if (heroDescriptionText != null) heroDescriptionText.text = heroData.description;
+                    
+                    if (heroPortrait != null)
+                    {
+                        heroPortrait.sprite = heroData.portrait;
+                        heroPortrait.preserveAspect = true;
+                        Debug.Log($"[HeroSelectionUI] Set portrait using legacy HeroData: {(heroData.portrait != null ? heroData.portrait.name : "null")}");
+                    }
+                    
+                    // Update ability info
+                    for (int i = 0; i < abilityIcons.Length && i < heroData.abilities.Length; i++)
+                    {
+                        if (abilityIcons[i] != null && heroData.abilities[i] != null)
+                        {
+                            abilityIcons[i].sprite = heroData.abilities[i].icon;
+                            abilityIcons[i].preserveAspect = true;
+                            abilityIcons[i].gameObject.SetActive(true);
+                        }
+                        
+                        if (abilityNames != null && i < abilityNames.Length && abilityNames[i] != null && heroData.abilities[i] != null)
+                        {
+                            abilityNames[i].text = heroData.abilities[i].abilityName;
+                        }
+                        
+                        if (abilityDescriptions != null && i < abilityDescriptions.Length && abilityDescriptions[i] != null && heroData.abilities[i] != null)
+                        {
+                            abilityDescriptions[i].text = heroData.abilities[i].description;
+                        }
+                    }
+                }
+                else
+                {
+                    Debug.LogError($"[HeroSelectionUI] No hero data found for index: {heroIndex} (both HeroDefinition and HeroData are null)");
+                    
+                    // Mostrar un mensaje de error en el panel
+                    if (heroNameText != null) heroNameText.text = "Hero Not Found";
+                    if (heroDescriptionText != null) heroDescriptionText.text = "Could not load hero data for index " + heroIndex;
+                    
+                    // Ocultar iconos de habilidades
+                    for (int i = 0; i < abilityIcons.Length; i++)
+                    {
+                        if (abilityIcons[i] != null)
+                            abilityIcons[i].gameObject.SetActive(false);
+                    }
                 }
             }
         }
+        else
+        {
+            if (heroInfoPanel == null) Debug.LogError("[HeroSelectionUI] heroInfoPanel is null!");
+            if (heroSelectionManager == null) Debug.LogError("[HeroSelectionUI] heroSelectionManager is null!");
+        }
     }
-    else
-    {
-        if (heroInfoPanel == null) Debug.LogError("[HeroSelectionUI] heroInfoPanel is null!");
-        if (heroSelectionManager == null) Debug.LogError("[HeroSelectionUI] heroSelectionManager is null!");
-    }
-}
     
     // Called by HeroSelectionManager to show this UI when needed
     public void Show()
@@ -790,11 +845,17 @@ private void ConfigureHeroButton(Button button, HeroDefinition heroDefinition)
         EnsureProperCanvasSetup();
         HideAllConnectionPanels();
         
+        // Forzar activación y visibilidad de todos los elementos UI
+        ForceAllUIElementsActive();
+        
         // Check if buttons are interactive - add debug sphere to test raycasting
         GameObject testSphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
         testSphere.transform.position = new Vector3(0, 0, 100);
         testSphere.transform.localScale = new Vector3(0.1f, 0.1f, 0.1f);
         Destroy(testSphere, 5f);
+        
+        // Verificar interactividad de los botones de nuevo
+        StartCoroutine(DebugButtonsInteractivity());
     }
     
     private IEnumerator DebugButtonsInteractivity()
@@ -912,120 +973,121 @@ private void ConfigureHeroButton(Button button, HeroDefinition heroDefinition)
     
     // Called by HeroSelectionManager when a player updates their selection
     public void UpdatePlayerSelection(ulong clientId, int heroIndex, bool isReady)
-{
-    if (playerSelectionIndicators.TryGetValue(clientId, out GameObject indicator))
     {
-        // Update the indicator to show selected hero and ready status
-        Image heroIcon = indicator.transform.Find("HeroIcon")?.GetComponent<Image>();
-        if (heroIcon != null && heroIndex >= 0 && heroSelectionManager != null)
+        if (playerSelectionIndicators.TryGetValue(clientId, out GameObject indicator))
         {
-            // Intentar obtener HeroDefinition primero
-            HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(heroIndex);
-            
-            if (heroDefinition != null)
+            // Update the indicator to show selected hero and ready status
+            Image heroIcon = indicator.transform.Find("HeroIcon")?.GetComponent<Image>();
+            if (heroIcon != null && heroIndex >= 0 && heroSelectionManager != null)
             {
-                heroIcon.sprite = heroDefinition.portrait;
-                heroIcon.color = Color.white; // Make visible
-                heroIcon.preserveAspect = true;
-            }
-            else
-            {
-                // Intentar HeroData como fallback
-                HeroData heroData = heroSelectionManager.GetHeroData(heroIndex);
-                if (heroData != null)
+                // Intentar obtener HeroDefinition primero
+                HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(heroIndex);
+                
+                if (heroDefinition != null)
                 {
-                    heroIcon.sprite = heroData.portrait;
-                    heroIcon.color = Color.white;
+                    heroIcon.sprite = heroDefinition.portrait;
+                    heroIcon.color = Color.white; // Make visible
                     heroIcon.preserveAspect = true;
                 }
-            }
-        }
-        
-        // Update ready status indicator
-        GameObject readyIndicator = indicator.transform.Find("ReadyIndicator")?.gameObject;
-        if (readyIndicator != null)
-        {
-            readyIndicator.SetActive(isReady);
-        }
-        
-        // Update player name to include selected hero
-        TextMeshProUGUI playerText = indicator.GetComponentInChildren<TextMeshProUGUI>();
-        if (playerText != null && heroIndex >= 0 && heroSelectionManager != null)
-        {
-            // Obtener nombre del héroe (primero intenta con HeroDefinition)
-            string heroName = "Unknown Hero";
-            
-            HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(heroIndex);
-            if (heroDefinition != null)
-            {
-                heroName = heroDefinition.heroName;
-            }
-            else
-            {
-                // Fallback a HeroData
-                HeroData heroData = heroSelectionManager.GetHeroData(heroIndex);
-                if (heroData != null)
+                else
                 {
-                    heroName = heroData.heroName;
+                    // Intentar HeroData como fallback
+                    HeroData heroData = heroSelectionManager.GetHeroData(heroIndex);
+                    if (heroData != null)
+                    {
+                        heroIcon.sprite = heroData.portrait;
+                        heroIcon.color = Color.white;
+                        heroIcon.preserveAspect = true;
+                    }
                 }
             }
             
-            // Actualizar texto
-            bool isLocalPlayer = clientId == NetworkManager.Singleton.LocalClientId;
-            string playerPrefix = isLocalPlayer ? "You" : $"Player {clientId}";
-            playerText.text = $"{playerPrefix} - {heroName}";
+            // Update ready status indicator
+            GameObject readyIndicator = indicator.transform.Find("ReadyIndicator")?.gameObject;
+            if (readyIndicator != null)
+            {
+                readyIndicator.SetActive(isReady);
+            }
             
-            // Colorear según estado
-            if (isReady)
+            // Update player name to include selected hero
+            TextMeshProUGUI playerText = indicator.GetComponentInChildren<TextMeshProUGUI>();
+            if (playerText != null && heroIndex >= 0 && heroSelectionManager != null)
             {
-                playerText.color = isLocalPlayer ? new Color(0, 0.8f, 0) : new Color(0, 0.6f, 0);
+                // Obtener nombre del héroe (primero intenta con HeroDefinition)
+                string heroName = "Unknown Hero";
+                
+                HeroDefinition heroDefinition = heroSelectionManager.GetHeroDefinition(heroIndex);
+                if (heroDefinition != null)
+                {
+                    heroName = heroDefinition.heroName;
+                }
+                else
+                {
+                    // Fallback a HeroData
+                    HeroData heroData = heroSelectionManager.GetHeroData(heroIndex);
+                    if (heroData != null)
+                    {
+                        heroName = heroData.heroName;
+                    }
+                }
+                
+                // Actualizar texto
+                bool isLocalPlayer = clientId == NetworkManager.Singleton.LocalClientId;
+                string playerPrefix = isLocalPlayer ? "You" : $"Player {clientId}";
+                playerText.text = $"{playerPrefix} - {heroName}";
+                
+                // Colorear según estado
+                if (isReady)
+                {
+                    playerText.color = isLocalPlayer ? new Color(0, 0.8f, 0) : new Color(0, 0.6f, 0);
+                }
+                else
+                {
+                    playerText.color = isLocalPlayer ? Color.green : Color.white;
+                }
             }
-            else
-            {
-                playerText.color = isLocalPlayer ? Color.green : Color.white;
-            }
-        }
-    }
-    else
-    {
-        // Si no existe el indicador, crearlo
-        Debug.LogWarning($"[HeroSelectionUI] No indicator found for client {clientId}, creating one...");
-        CreatePlayerSelectionIndicator(clientId);
-        
-        // Intentar actualizar de nuevo
-        if (playerSelectionIndicators.ContainsKey(clientId))
-        {
-            UpdatePlayerSelection(clientId, heroIndex, isReady);
-        }
-    }
-}
-public void UpdateHeroButtonsDisplay(HeroDefinition[] availableHeroes)
-{
-    if (heroButtons == null || heroButtons.Length == 0)
-    {
-        Debug.LogError("[HeroSelectionUI] Hero buttons array is not configured properly");
-        return;
-    }
-    
-    int heroCount = availableHeroes?.Length ?? 0;
-    Debug.Log($"[HeroSelectionUI] Updating hero buttons with {heroCount} available heroes");
-    
-    // For each button, try to assign a hero if available
-    for (int i = 0; i < heroButtons.Length; i++)
-    {
-        if (heroButtons[i] == null) continue;
-        
-        if (i < heroCount && availableHeroes[i] != null)
-        {
-            // Configure button with hero data
-            ConfigureHeroButton(heroButtons[i], availableHeroes[i]);
-            heroButtons[i].gameObject.SetActive(true);
         }
         else
         {
-            // Hide buttons without a corresponding hero
-            heroButtons[i].gameObject.SetActive(false);
+            // Si no existe el indicador, crearlo
+            Debug.LogWarning($"[HeroSelectionUI] No indicator found for client {clientId}, creating one...");
+            CreatePlayerSelectionIndicator(clientId);
+            
+            // Intentar actualizar de nuevo
+            if (playerSelectionIndicators.ContainsKey(clientId))
+            {
+                UpdatePlayerSelection(clientId, heroIndex, isReady);
+            }
         }
     }
-}
+    
+    public void UpdateHeroButtonsDisplay(HeroDefinition[] availableHeroes)
+    {
+        if (heroButtons == null || heroButtons.Length == 0)
+        {
+            Debug.LogError("[HeroSelectionUI] Hero buttons array is not configured properly");
+            return;
+        }
+        
+        int heroCount = availableHeroes?.Length ?? 0;
+        Debug.Log($"[HeroSelectionUI] Updating hero buttons with {heroCount} available heroes");
+        
+        // For each button, try to assign a hero if available
+        for (int i = 0; i < heroButtons.Length; i++)
+        {
+            if (heroButtons[i] == null) continue;
+            
+            if (i < heroCount && availableHeroes[i] != null)
+            {
+                // Configure button with hero data
+                ConfigureHeroButton(heroButtons[i], availableHeroes[i]);
+                heroButtons[i].gameObject.SetActive(true);
+            }
+            else
+            {
+                // Hide buttons without a corresponding hero
+                heroButtons[i].gameObject.SetActive(false);
+            }
+        }
+    }
 }

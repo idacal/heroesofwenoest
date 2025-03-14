@@ -1,5 +1,7 @@
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.UI;
+using System.Collections;
 
 public class NetworkManagerExtension : MonoBehaviour
 {
@@ -66,6 +68,50 @@ public class NetworkManagerExtension : MonoBehaviour
             // Hide connection panel - the hero selection UI will be shown
             // by the HeroSelectionManager when it spawns
             HideConnectionPanel();
+            
+            // NUEVO: Activar UI de selección de héroe directamente
+            StartCoroutine(DelayedShowHeroSelectionUI());
+        }
+    }
+    
+    // NUEVO: Método para mostrar UI de selección después de un delay
+    private IEnumerator DelayedShowHeroSelectionUI()
+    {
+        yield return new WaitForSeconds(1.0f);
+        
+        if (heroSelectionUI != null)
+        {
+            heroSelectionUI.gameObject.SetActive(true);
+            heroSelectionUI.Show();
+            
+            // Asegurar que está en frente
+            Canvas canvas = heroSelectionUI.GetComponentInParent<Canvas>();
+            if (canvas != null)
+            {
+                canvas.sortingOrder = 100;
+            }
+            
+            // Forzar todos los elementos a estar activos
+            heroSelectionUI.ForceAllUIElementsActive();
+            
+            // Buscar HeroSelectionManager y actualizar UI
+            HeroSelectionManager selectionManager = FindObjectOfType<HeroSelectionManager>();
+            if (selectionManager != null)
+            {
+                selectionManager.UpdateHeroSelectionUI();
+            }
+        }
+        else
+        {
+            Debug.LogError("[NetworkManagerExtension] heroSelectionUI es null!");
+            
+            // Intentar encontrarla
+            heroSelectionUI = FindObjectOfType<HeroSelectionUI>();
+            if (heroSelectionUI != null)
+            {
+                heroSelectionUI.gameObject.SetActive(true);
+                heroSelectionUI.Show();
+            }
         }
     }
     
@@ -120,66 +166,66 @@ public class NetworkManagerExtension : MonoBehaviour
     
     // Call this from your UI instead of directly calling NetworkManager.StartHost()
     public void StartHostWithHeroSelection()
-{
-    if (networkManager != null)
     {
-        Debug.Log("[NetworkManagerExtension] StartHostWithHeroSelection called");
-        
-        // CRITICAL: Hide connection panel FIRST
-        HideConnectionPanel();
-        
-        // IMPORTANT: First find and set hero selection mode BEFORE starting host
-        MOBAGameManager gameManager = FindObjectOfType<MOBAGameManager>();
-        if (gameManager != null)
+        if (networkManager != null)
         {
-            Debug.Log("[NetworkManagerExtension] Setting hero selection mode = true");
-            gameManager.SetHeroSelectionMode(true);
-        }
-        else
-        {
-            Debug.LogError("[NetworkManagerExtension] No MOBAGameManager found!");
-        }
-        
-        // Start host after setting selection mode
-        Debug.Log("[NetworkManagerExtension] Starting host...");
-        networkManager.StartHost();
-        
-        // Make sure connection panel is hidden again
-        HideConnectionPanel();
-        
-        // Ensure hero selection UI is displayed
-        if (heroSelectionUI != null)
-        {
-            Debug.Log("[NetworkManagerExtension] Showing hero selection UI");
-            heroSelectionUI.gameObject.SetActive(true);
-            heroSelectionUI.Show();
+            Debug.Log("[NetworkManagerExtension] StartHostWithHeroSelection called");
             
-            // Get HeroSelectionManager and make sure it updates the UI
-            HeroSelectionManager selectionManager = FindObjectOfType<HeroSelectionManager>();
-            if (selectionManager != null)
+            // CRITICAL: Hide connection panel FIRST
+            HideConnectionPanel();
+            
+            // IMPORTANT: First find and set hero selection mode BEFORE starting host
+            MOBAGameManager gameManager = FindObjectOfType<MOBAGameManager>();
+            if (gameManager != null)
             {
-                // Tell the manager to update the UI with available heroes
-                selectionManager.UpdateHeroSelectionUI();
+                Debug.Log("[NetworkManagerExtension] Setting hero selection mode = true");
+                gameManager.SetHeroSelectionMode(true);
             }
             else
             {
-                Debug.LogError("[NetworkManagerExtension] HeroSelectionManager not found!");
+                Debug.LogError("[NetworkManagerExtension] No MOBAGameManager found!");
             }
             
-            // Set sorting order higher than connection panel
-            Canvas heroSelectionCanvas = heroSelectionUI.GetComponentInParent<Canvas>();
-            if (heroSelectionCanvas != null)
+            // Start host after setting selection mode
+            Debug.Log("[NetworkManagerExtension] Starting host...");
+            networkManager.StartHost();
+            
+            // Make sure connection panel is hidden again
+            HideConnectionPanel();
+            
+            // Ensure hero selection UI is displayed
+            if (heroSelectionUI != null)
             {
-                heroSelectionCanvas.sortingOrder = 100; // Higher value = in front
-                Debug.Log($"[NetworkManagerExtension] Set hero selection canvas sorting order to {heroSelectionCanvas.sortingOrder}");
+                Debug.Log("[NetworkManagerExtension] Showing hero selection UI");
+                heroSelectionUI.gameObject.SetActive(true);
+                heroSelectionUI.Show();
+                
+                // Get HeroSelectionManager and make sure it updates the UI
+                HeroSelectionManager selectionManager = FindObjectOfType<HeroSelectionManager>();
+                if (selectionManager != null)
+                {
+                    // Tell the manager to update the UI with available heroes
+                    selectionManager.UpdateHeroSelectionUI();
+                }
+                else
+                {
+                    Debug.LogError("[NetworkManagerExtension] HeroSelectionManager not found!");
+                }
+                
+                // Set sorting order higher than connection panel
+                Canvas heroSelectionCanvas = heroSelectionUI.GetComponentInParent<Canvas>();
+                if (heroSelectionCanvas != null)
+                {
+                    heroSelectionCanvas.sortingOrder = 100; // Higher value = in front
+                    Debug.Log($"[NetworkManagerExtension] Set hero selection canvas sorting order to {heroSelectionCanvas.sortingOrder}");
+                }
+            }
+            else
+            {
+                Debug.LogError("[NetworkManagerExtension] heroSelectionUI is null!");
             }
         }
-        else
-        {
-            Debug.LogError("[NetworkManagerExtension] heroSelectionUI is null!");
-        }
     }
-}
     
     // Call this from your UI instead of directly calling NetworkManager.StartClient()
     public void StartClientWithHeroSelection()
@@ -196,6 +242,9 @@ public class NetworkManagerExtension : MonoBehaviour
             
             // Make sure connection panel is hidden again
             HideConnectionPanel();
+            
+            // NUEVO: Forzar activación de UI de selección después de un tiempo
+            StartCoroutine(DelayedShowHeroSelectionUI());
             
             Debug.Log("[NetworkManagerExtension] Client started with hero selection phase");
         }
