@@ -4,53 +4,54 @@ using System;
 using System.Collections.Generic;
 using PlayerAbilities;
 using System.Collections;
+using System.Linq;
 
 public class PlayerAbilityManager : NetworkBehaviour
 {
-    [Header("Configuración")]
+    [Header("Configuration")]
     [SerializeField] public GameObject clickIndicatorPrefab;
     
-    [Header("Depuración")]
+    [Header("Debug")]
     [SerializeField] private bool showDebugMessages = true;
-    [SerializeField] private float syncInterval = 5f; // Segundos entre sincronizaciones completas
+    [SerializeField] private float syncInterval = 5f; // Seconds between full syncs
     
-    // Lista de habilidades activas
+    // Active abilities list
     private List<BaseAbility> abilities = new List<BaseAbility>();
     
-    // Mapa de slots a habilidades (para UI)
+    // Slot to ability mapping (for UI)
     private Dictionary<int, BaseAbility> abilitySlots = new Dictionary<int, BaseAbility>();
     
-    // Referencias
+    // Component references
     private PlayerStats playerStats;
     private PlayerNetwork playerNetwork;
     
-    // Variables para seguimiento de estado
+    // State tracking
     public bool isInImpactPause { get; private set; } = false;
     
-    // Para compatibilidad con sistema antiguo
+    // For compatibility with legacy system
     private PlayerAbility legacyAbilityComponent;
     
     private void Awake()
     {
-        // Obtener referencias
+        // Get component references
         playerStats = GetComponent<PlayerStats>();
         playerNetwork = GetComponent<PlayerNetwork>();
         legacyAbilityComponent = GetComponent<PlayerAbility>();
         
         if (playerStats == null)
         {
-            Debug.LogError("[PlayerAbilityManager] No se encontró componente PlayerStats");
+            Debug.LogWarning("[PlayerAbilityManager] PlayerStats component not found");
         }
         
         if (playerNetwork == null)
         {
-            Debug.LogError("[PlayerAbilityManager] No se encontró componente PlayerNetwork");
+            Debug.LogWarning("[PlayerAbilityManager] PlayerNetwork component not found");
         }
         
-        // Verificar componentes antiguos para compatibilidad
+        // Check for legacy component
         if (legacyAbilityComponent != null && showDebugMessages)
         {
-            Debug.Log("[PlayerAbilityManager] Se encontró componente antiguo PlayerAbility. Se mantendrá para compatibilidad.");
+            Debug.Log("[PlayerAbilityManager] Legacy PlayerAbility component found. Will maintain for compatibility.");
         }
     }
     
@@ -60,12 +61,12 @@ public class PlayerAbilityManager : NetworkBehaviour
         
         Debug.Log($"[PlayerAbilityManager] OnNetworkSpawn - IsOwner: {IsOwner}, IsServer: {IsServer}");
         
-        // Activar procesamiento de entrada solo para el propietario
+        // Enable input processing for owner only
         if (IsOwner)
         {
             enabled = true;
             
-            // Iniciar sincronización periódica si somos el cliente local
+            // Start client-side sync requests
             if (!IsServer)
             {
                 StartCoroutine(RequestSyncCoroutine());
@@ -73,85 +74,41 @@ public class PlayerAbilityManager : NetworkBehaviour
         }
         else if (!IsServer)
         {
-            // Si no somos ni propietario ni servidor, deshabilitamos
+            // Disable if not owner or server
             enabled = false;
         }
         
-        // Si somos el servidor, iniciar sincronización periódica
+        // Start server-side sync
         if (IsServer)
         {
             StartCoroutine(PeriodicSyncCoroutine());
         }
         
-        // Buscar Hero y solicitar inicialización
-        Hero heroComponent = GetComponent<Hero>();
-        if (heroComponent != null)
+        // Let Hero component handle ability initialization
+        Hero hero = GetComponent<Hero>();
+        if (hero != null)
         {
             if (showDebugMessages)
             {
-                Debug.Log($"[PlayerAbilityManager] OnNetworkSpawn - Delegando inicialización al componente Hero");
+                Debug.Log("[PlayerAbilityManager] Deferring ability initialization to Hero component");
             }
-            // Esperar un breve momento para asegurar que todo esté listo
-            StartCoroutine(DelayedInitialization(heroComponent));
         }
         else
         {
-            Debug.LogWarning("[PlayerAbilityManager] No Hero component found, will use default abilities");
+            // No Hero component, initialize default abilities later
             StartCoroutine(DelayedDefaultInitialization());
-        }
-    }
-    
-    private IEnumerator DelayedInitialization(Hero heroComponent)
-    {
-        // Esperar un momento para asegurar que todo está listo
-        yield return new WaitForSeconds(0.5f);
-        
-        if (showDebugMessages)
-        {
-            Debug.Log("[PlayerAbilityManager] Iniciando inicialización de habilidades de héroe...");
-        }
-        heroComponent.InitializeHeroAbilities();
-        
-        // Verificar si tenemos habilidades
-        yield return new WaitForSeconds(0.5f);
-        if (abilities.Count == 0)
-        {
-            Debug.LogWarning("[PlayerAbilityManager] ¡No se inicializaron habilidades! Iniciando habilidades por defecto...");
-            InitializeDefaultAbilities();
-        }
-        else
-        {
-            Debug.Log($"[PlayerAbilityManager] Se inicializaron {abilities.Count} habilidades con éxito");
-            // Imprimir las habilidades para depuración
-            for (int i = 0; i < abilities.Count; i++)
-            {
-                if (abilities[i] != null)
-                {
-                    Debug.Log($"[PlayerAbilityManager] Habilidad {i}: {abilities[i].abilityName}, Tecla: {abilities[i].activationKey}");
-                }
-                else
-                {
-                    Debug.LogError($"[PlayerAbilityManager] Habilidad {i} es NULL!");
-                }
-            }
-            
-            // Imprimir los slots para depuración
-            foreach (var slot in abilitySlots)
-            {
-                Debug.Log($"[PlayerAbilityManager] Slot {slot.Key}: {(slot.Value != null ? slot.Value.abilityName : "NULL")}");
-            }
         }
     }
     
     private IEnumerator DelayedDefaultInitialization()
     {
-        // Esperar un momento para asegurar que los componentes están listos
+        // Wait for everything to be ready
         yield return new WaitForSeconds(1.0f);
         
-        // Solo inicializar habilidades por defecto si no hay habilidades ya
+        // Only initialize default abilities if none exist
         if (abilities.Count == 0)
         {
-            Debug.Log("[PlayerAbilityManager] Initializing default abilities after delay");
+            Debug.Log("[PlayerAbilityManager] No abilities found, initializing defaults");
             InitializeDefaultAbilities();
         }
     }
@@ -160,31 +117,30 @@ public class PlayerAbilityManager : NetworkBehaviour
     {
         if (showDebugMessages)
         {
-            Debug.Log("[PlayerAbilityManager] Inicializando habilidades por defecto");
+            Debug.Log("[PlayerAbilityManager] Initializing default abilities");
         }
         
-        // Limpiar cualquier habilidad existente
+        // Clear any existing abilities
         RemoveAllAbilities();
         
         try
         {
-            // Añadir habilidades básicas
+            // Add basic abilities
             DashAbility dashAbility = AddAbility<DashAbility>(0);
             StrongJumpAbility jumpAbility = AddAbility<StrongJumpAbility>(1);
             
             if (dashAbility != null && jumpAbility != null)
             {
-                Debug.Log("[PlayerAbilityManager] Habilidades por defecto inicializadas con éxito");
+                Debug.Log("[PlayerAbilityManager] Default abilities initialized successfully");
             }
             else
             {
-                Debug.LogError("[PlayerAbilityManager] No se pudieron crear habilidades por defecto. " +
-                              $"DashAbility: {dashAbility != null}, StrongJumpAbility: {jumpAbility != null}");
+                Debug.LogWarning("[PlayerAbilityManager] Could not create default abilities");
             }
         }
         catch (Exception e)
         {
-            Debug.LogError($"[PlayerAbilityManager] Error al inicializar habilidades por defecto: {e.Message}\n{e.StackTrace}");
+            Debug.LogError($"[PlayerAbilityManager] Error initializing default abilities: {e.Message}");
         }
     }
     
@@ -192,70 +148,56 @@ public class PlayerAbilityManager : NetworkBehaviour
     {
         if (!IsOwner) return;
         
-        // Procesar activación de habilidades
+        // Process ability activations
         foreach (var ability in abilities)
         {
-            if (ability == null) 
-            {
-                Debug.LogError("[PlayerAbilityManager] Null ability in abilities list!");
-                continue;
-            }
+            if (ability == null) continue;
             
-            // Verificar si se presionó la tecla de activación
+            // Check for activation key press
             if (Input.GetKeyDown(ability.activationKey))
             {
                 TryActivateAbility(ability);
             }
             
-            // Actualizar lógica de la habilidad cada frame
+            // Update ability logic
             try
             {
                 ability.UpdateAbility();
             }
             catch (Exception e)
             {
-                Debug.LogError($"[PlayerAbilityManager] Error durante UpdateAbility para {ability.abilityName}: {e.Message}");
+                Debug.LogError($"[PlayerAbilityManager] Error in UpdateAbility for {ability.abilityName}: {e.Message}");
             }
         }
     }
     
     private void TryActivateAbility(BaseAbility ability)
     {
-        if (ability == null)
-        {
-            Debug.LogError("[PlayerAbilityManager] Trying to activate a null ability!");
-            return;
-        }
+        if (ability == null) return;
         
         try
         {
             if (ability.CanActivate())
             {
-                // Enviar solicitud de activación al servidor
+                // Send activation request to server
                 ActivateAbilityServerRpc(abilities.IndexOf(ability));
             }
-            else
+            else if (showDebugMessages)
             {
-                // Proporcionar feedback sobre por qué no se puede usar la habilidad
+                // Show feedback about why ability can't be used
                 if (!ability.isReady)
                 {
-                    if (showDebugMessages)
-                    {
-                        Debug.Log($"Habilidad {ability.abilityName} en cooldown: {ability.GetRemainingCooldown():F1}s");
-                    }
+                    Debug.Log($"Ability {ability.abilityName} on cooldown: {ability.GetRemainingCooldown():F1}s");
                 }
                 else if (playerStats != null && playerStats.CurrentMana < ability.manaCost)
                 {
-                    if (showDebugMessages)
-                    {
-                        Debug.Log($"No hay suficiente maná para {ability.abilityName}. Necesitas {ability.manaCost}, tienes {playerStats.CurrentMana:F1}");
-                    }
+                    Debug.Log($"Not enough mana for {ability.abilityName}. Need {ability.manaCost}, have {playerStats.CurrentMana:F1}");
                 }
             }
         }
         catch (Exception e)
         {
-            Debug.LogError($"[PlayerAbilityManager] Error al activar {ability.abilityName}: {e.Message}\n{e.StackTrace}");
+            Debug.LogError($"[PlayerAbilityManager] Error activating {ability.abilityName}: {e.Message}");
         }
     }
     
@@ -264,21 +206,29 @@ public class PlayerAbilityManager : NetworkBehaviour
     {
         if (abilityIndex < 0 || abilityIndex >= abilities.Count)
         {
-            Debug.LogError($"[PlayerAbilityManager] Invalid ability index: {abilityIndex} (max: {abilities.Count-1})");
-            return;
-        }
-            
-        BaseAbility ability = abilities[abilityIndex];
-        if (ability == null)
-        {
-            Debug.LogError($"[PlayerAbilityManager] Ability at index {abilityIndex} is null!");
+            Debug.LogError($"[PlayerAbilityManager] Invalid ability index: {abilityIndex}");
             return;
         }
         
-        // Verificar si hay suficiente maná
-        if (playerStats.UseMana(ability.manaCost))
+        BaseAbility ability = abilities[abilityIndex];
+        if (ability == null) return;
+        
+        // Check mana cost
+        if (playerStats != null && ability.manaCost > 0)
         {
-            // Activar habilidad en todos los clientes
+            if (playerStats.UseMana(ability.manaCost))
+            {
+                // Activate on all clients
+                ActivateAbilityClientRpc(abilityIndex);
+            }
+            else if (showDebugMessages)
+            {
+                Debug.Log($"[PlayerAbilityManager] Not enough mana for {ability.abilityName}");
+            }
+        }
+        else
+        {
+            // No mana cost or no player stats, just activate
             ActivateAbilityClientRpc(abilityIndex);
         }
     }
@@ -288,59 +238,44 @@ public class PlayerAbilityManager : NetworkBehaviour
     {
         if (abilityIndex < 0 || abilityIndex >= abilities.Count)
         {
-            Debug.LogError($"[PlayerAbilityManager] ClientRpc: Invalid ability index: {abilityIndex} (max: {abilities.Count-1})");
-            return;
-        }
-            
-        BaseAbility ability = abilities[abilityIndex];
-        if (ability == null)
-        {
-            Debug.LogError($"[PlayerAbilityManager] ClientRpc: Ability at index {abilityIndex} is null!");
+            Debug.LogError($"[PlayerAbilityManager] ClientRpc: Invalid ability index: {abilityIndex}");
             return;
         }
         
-        // Activar la habilidad a través del método de red
+        BaseAbility ability = abilities[abilityIndex];
+        if (ability == null) return;
+        
+        // Activate through networked method
         ability.ActivateNetworked();
         
-        // Sincronizar con PlayerAbility si existe (compatibilidad)
+        // Sync with legacy system if it exists
         SyncLegacySystem();
     }
     
-    // Añadir una nueva habilidad con slot opcional
+    // Add ability with optional slot assignment
     public T AddAbility<T>(int slot = -1) where T : BaseAbility
     {
         Debug.Log($"[PlayerAbilityManager] Adding ability of type {typeof(T).Name} to slot {slot}");
         
         try
         {
-            // Verificar si la habilidad ya existe
+            // Check if this ability type already exists
             foreach (var ability in abilities)
             {
                 if (ability is T existingAbility)
                 {
-                    if (showDebugMessages)
-                    {
-                        Debug.Log($"La habilidad {typeof(T).Name} ya está añadida al jugador");
-                    }
-                    
-                    // Si se especificó un slot, asignar a ese slot
+                    // Already exists, just update slot if needed
                     if (slot >= 0)
                     {
-                        if (abilitySlots.ContainsKey(slot))
-                        {
-                            abilitySlots[slot] = ability;
-                        }
-                        else
-                        {
-                            abilitySlots.Add(slot, ability);
-                        }
+                        abilitySlots[slot] = ability;
+                        Debug.Log($"[PlayerAbilityManager] Updated existing {typeof(T).Name} to slot {slot}");
                     }
                     
-                    return existingAbility as T;
+                    return (T)ability;
                 }
             }
             
-            // Añadir la nueva habilidad e inicializarla correctamente
+            // Create new ability
             T newAbility = gameObject.AddComponent<T>();
             if (newAbility == null)
             {
@@ -348,13 +283,13 @@ public class PlayerAbilityManager : NetworkBehaviour
                 return null;
             }
             
-            // Inicializar con el NetworkBehaviour correcto
+            // Initialize
             newAbility.Initialize(this);
             
-            // Agregar a la lista activa
+            // Add to list
             abilities.Add(newAbility);
             
-            // Asignar a slot específico si se solicita
+            // Assign to slot if specified
             if (slot >= 0)
             {
                 if (abilitySlots.ContainsKey(slot))
@@ -368,27 +303,125 @@ public class PlayerAbilityManager : NetworkBehaviour
                 Debug.Log($"[PlayerAbilityManager] Assigned {typeof(T).Name} to slot {slot}");
             }
             
-            // Sincronizar con el sistema antiguo si existe
+            // Sync with legacy system
             if (legacyAbilityComponent != null)
             {
                 legacyAbilityComponent.RegisterPowerUpAbility(newAbility, slot);
-            }
-            
-            if (IsOwner && showDebugMessages)
-            {
-                Debug.Log($"Nueva habilidad adquirida: {newAbility.abilityName}, asignada a slot {slot}");
             }
             
             return newAbility;
         }
         catch (Exception e)
         {
-            Debug.LogError($"[PlayerAbilityManager] Error adding ability {typeof(T).Name}: {e.Message}\n{e.StackTrace}");
+            Debug.LogError($"[PlayerAbilityManager] Error adding ability {typeof(T).Name}: {e.Message}");
             return null;
         }
     }
     
-    // Eliminar una habilidad por tipo
+    // Add ability by type (for reflection-based usage)
+    public BaseAbility AddAbilityByType(Type abilityType, int slot = -1)
+    {
+        if (abilityType == null || !typeof(BaseAbility).IsAssignableFrom(abilityType))
+        {
+            Debug.LogError($"[PlayerAbilityManager] Invalid ability type: {abilityType?.Name ?? "null"}");
+            return null;
+        }
+        
+        Debug.Log($"[PlayerAbilityManager] Adding ability of type {abilityType.Name} to slot {slot}");
+        
+        try
+        {
+            // Check if already exists
+            foreach (var ability in abilities)
+            {
+                if (ability.GetType() == abilityType)
+                {
+                    // Already exists, just update slot
+                    if (slot >= 0)
+                    {
+                        abilitySlots[slot] = ability;
+                        Debug.Log($"[PlayerAbilityManager] Updated existing {abilityType.Name} to slot {slot}");
+                    }
+                    
+                    return ability;
+                }
+            }
+            
+            // Create new ability
+            BaseAbility newAbility = gameObject.AddComponent(abilityType) as BaseAbility;
+            if (newAbility == null)
+            {
+                Debug.LogError($"[PlayerAbilityManager] Failed to add component of type {abilityType.Name}");
+                return null;
+            }
+            
+            // Initialize
+            newAbility.Initialize(this);
+            
+            // Add to list
+            abilities.Add(newAbility);
+            
+            // Assign to slot if specified
+            if (slot >= 0)
+            {
+                if (abilitySlots.ContainsKey(slot))
+                {
+                    abilitySlots[slot] = newAbility;
+                }
+                else
+                {
+                    abilitySlots.Add(slot, newAbility);
+                }
+                Debug.Log($"[PlayerAbilityManager] Assigned {abilityType.Name} to slot {slot}");
+            }
+            
+            // Sync with legacy system
+            if (legacyAbilityComponent != null && slot >= 0 && slot < 4)
+            {
+                legacyAbilityComponent.RegisterPowerUpAbility(newAbility, slot);
+            }
+            
+            return newAbility;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"[PlayerAbilityManager] Error adding ability {abilityType.Name}: {e.Message}");
+            return null;
+        }
+    }
+    
+    // Remove all abilities
+    public void RemoveAllAbilities()
+    {
+        Debug.Log("[PlayerAbilityManager] Removing all abilities");
+        
+        // Create a copy of the list to avoid modification during iteration
+        BaseAbility[] abilitiesToRemove = abilities.ToArray();
+        
+        foreach (var ability in abilitiesToRemove)
+        {
+            if (ability != null)
+            {
+                ability.Cleanup();
+                Destroy(ability);
+            }
+        }
+        
+        // Clear collections
+        abilities.Clear();
+        abilitySlots.Clear();
+        
+        // Clear legacy system if it exists
+        if (legacyAbilityComponent != null)
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                legacyAbilityComponent.UnregisterPowerUpAbility(i);
+            }
+        }
+    }
+    
+    // Remove a specific ability by type
     public bool RemoveAbility<T>() where T : BaseAbility
     {
         for (int i = 0; i < abilities.Count; i++)
@@ -398,44 +431,30 @@ public class PlayerAbilityManager : NetworkBehaviour
                 BaseAbility ability = abilities[i];
                 abilities.RemoveAt(i);
                 
-                // Eliminar de slots
+                // Remove from slots
                 List<int> slotsToRemove = new List<int>();
-                foreach (var slotPair in abilitySlots)
+                foreach (var pair in abilitySlots)
                 {
-                    if (slotPair.Value == ability)
+                    if (pair.Value == ability)
                     {
-                        slotsToRemove.Add(slotPair.Key);
+                        slotsToRemove.Add(pair.Key);
                     }
                 }
                 
-                foreach (int slotKey in slotsToRemove)
+                foreach (int slot in slotsToRemove)
                 {
-                    abilitySlots.Remove(slotKey);
+                    abilitySlots.Remove(slot);
+                    
+                    // Unregister from legacy system
+                    if (legacyAbilityComponent != null && slot >= 0 && slot < 4)
+                    {
+                        legacyAbilityComponent.UnregisterPowerUpAbility(slot);
+                    }
                 }
                 
-                // Limpiar recursos
+                // Clean up
                 ability.Cleanup();
                 Destroy(ability);
-                
-                // Sincronizar con sistema antiguo
-                if (legacyAbilityComponent != null)
-                {
-                    // No tenemos un método directo para determinar el slot, pero podemos intentar
-                    // por los slots comunes
-                    for (int slot = 0; slot < 4; slot++)
-                    {
-                        if (legacyAbilityComponent.GetAbility(slot)?.name == ability.abilityName)
-                        {
-                            legacyAbilityComponent.UnregisterPowerUpAbility(slot);
-                            break;
-                        }
-                    }
-                }
-                
-                if (IsOwner && showDebugMessages)
-                {
-                    Debug.Log($"Habilidad removida: {ability.abilityName}");
-                }
                 
                 return true;
             }
@@ -444,106 +463,18 @@ public class PlayerAbilityManager : NetworkBehaviour
         return false;
     }
     
-    // Eliminar todas las habilidades
-    public void RemoveAllAbilities()
-    {
-        // Usar HashSet para evitar procesar habilidades duplicadas
-        HashSet<BaseAbility> processedAbilities = new HashSet<BaseAbility>();
-        
-        // Primero, procesar todas las habilidades en nuestra lista
-        foreach (var ability in abilities)
-        {
-            if (ability != null && !processedAbilities.Contains(ability))
-            {
-                processedAbilities.Add(ability);
-                ability.Cleanup();
-                Destroy(ability);
-            }
-        }
-        
-        // Luego buscar habilidades que pudieran haber sido añadidas directamente como componentes
-        foreach (var ability in GetComponents<BaseAbility>())
-        {
-            if (ability != null && !processedAbilities.Contains(ability))
-            {
-                processedAbilities.Add(ability);
-                ability.Cleanup();
-                Destroy(ability);
-            }
-        }
-        
-        // Limpiar la lista de habilidades activas
-        abilities.Clear();
-        
-        // Limpiar diccionario de slots
-        abilitySlots.Clear();
-        
-        if (showDebugMessages)
-        {
-            Debug.Log("[PlayerAbilityManager] Todas las habilidades han sido eliminadas");
-        }
-    }
-    
-    // Inicializar habilidades desde definiciones
-    public void InitializeAbilities(List<AbilityDefinition> abilityDefinitions)
-    {
-        // Limpiar habilidades existentes
-        RemoveAllAbilities();
-        
-        // Crear e inicializar habilidades
-        for (int i = 0; i < abilityDefinitions.Count; i++)
-        {
-            var def = abilityDefinitions[i];
-            
-            // Crear habilidad a partir del tipo
-            Type abilityType = Type.GetType(def.abilityType);
-            if (abilityType != null && typeof(BaseAbility).IsAssignableFrom(abilityType))
-            {
-                BaseAbility ability = gameObject.AddComponent(abilityType) as BaseAbility;
-                
-                // Configurar habilidad
-                ability.abilityName = def.abilityName;
-                ability.activationKey = def.activationKey;
-                ability.manaCost = def.manaCost;
-                ability.cooldown = def.cooldown;
-                ability.icon = def.icon;
-                
-                // Inicializar con este NetworkBehaviour
-                ability.Initialize(this);
-                
-                // Añadir a las habilidades activas
-                abilities.Add(ability);
-                
-                // Asignar al slot correspondiente
-                abilitySlots[i] = ability;
-                
-                if (showDebugMessages)
-                {
-                    Debug.Log($"Añadida habilidad: {ability.abilityName} en slot {i}");
-                }
-            }
-            else
-            {
-                Debug.LogError($"Error al crear habilidad de tipo: {def?.abilityType ?? "NULL"}");
-            }
-        }
-        
-        // Sincronizar con sistema antiguo
-        SyncLegacySystem();
-    }
-    
-    // Sincronizar con el sistema antiguo de PlayerAbility (para compatibilidad)
+    // Sync with legacy system
     private void SyncLegacySystem()
     {
         if (legacyAbilityComponent == null) return;
         
-        // Intentar mapear habilidades a slots del sistema antiguo
-        foreach (var slotPair in abilitySlots)
+        // Map abilities to legacy slots
+        foreach (var pair in abilitySlots)
         {
-            int slot = slotPair.Key;
-            BaseAbility ability = slotPair.Value;
+            int slot = pair.Key;
+            BaseAbility ability = pair.Value;
             
-            // Solo sincronizamos slots 0-3 que es lo que soporta el sistema antiguo
+            // Only sync slots 0-3 (legacy system limit)
             if (slot >= 0 && slot < 4 && ability != null)
             {
                 legacyAbilityComponent.RegisterPowerUpAbility(ability, slot);
@@ -551,15 +482,16 @@ public class PlayerAbilityManager : NetworkBehaviour
         }
     }
     
-    // Método para establecer el estado de pausa de impacto
+    // Set impact pause state
     public void SetInImpactPause(bool pause)
     {
         isInImpactPause = pause;
     }
     
-    // Métodos de ayuda para UI y otros sistemas
+    // Get ability count
     public int GetAbilityCount() => abilities.Count;
     
+    // Get ability by index
     public BaseAbility GetAbility(int index)
     {
         if (index >= 0 && index < abilities.Count)
@@ -567,7 +499,7 @@ public class PlayerAbilityManager : NetworkBehaviour
         return null;
     }
     
-    // Obtener habilidad por slot (para UI)
+    // Get ability by slot
     public BaseAbility GetAbilityBySlot(int slot)
     {
         if (abilitySlots.TryGetValue(slot, out BaseAbility ability))
@@ -575,7 +507,7 @@ public class PlayerAbilityManager : NetworkBehaviour
             return ability;
         }
         
-        // Fallback: intentar mapear índice en la lista
+        // Fallback: try to map slot to index
         if (slot >= 0 && slot < abilities.Count)
         {
             return abilities[slot];
@@ -584,7 +516,7 @@ public class PlayerAbilityManager : NetworkBehaviour
         return null;
     }
     
-    // Para consultas de habilidades específicas
+    // Get ability by type
     public T GetAbilityOfType<T>() where T : BaseAbility
     {
         foreach (var ability in abilities)
@@ -595,7 +527,7 @@ public class PlayerAbilityManager : NetworkBehaviour
         return null;
     }
     
-    // Verificar si el jugador tiene una habilidad específica
+    // Check if player has a specific ability
     public bool HasAbility<T>() where T : BaseAbility
     {
         foreach (var ability in abilities)
@@ -606,7 +538,7 @@ public class PlayerAbilityManager : NetworkBehaviour
         return false;
     }
     
-    // Métodos para compatibilidad con PlayerNetwork
+    // Helper methods for compatibility with PlayerNetwork
     public bool IsMoving()
     {
         if (playerNetwork != null)
@@ -625,7 +557,7 @@ public class PlayerAbilityManager : NetworkBehaviour
         return transform.position;
     }
     
-    // Sincronización periódica (desde el servidor)
+    // Server-side sync coroutine
     private IEnumerator PeriodicSyncCoroutine()
     {
         while (true)
@@ -639,12 +571,12 @@ public class PlayerAbilityManager : NetworkBehaviour
         }
     }
     
-    // Solicitar sincronización periódica (desde el cliente)
+    // Client-side sync request coroutine
     private IEnumerator RequestSyncCoroutine()
     {
         while (true)
         {
-            yield return new WaitForSeconds(syncInterval * 1.5f); // Ligeramente más largo que el intervalo del servidor
+            yield return new WaitForSeconds(syncInterval * 1.5f);
             
             if (IsOwner && !IsServer)
             {
@@ -653,12 +585,12 @@ public class PlayerAbilityManager : NetworkBehaviour
         }
     }
     
-    // Método para sincronizar el estado de todas las habilidades
+    // Sync ability states from server to clients
     public void SyncAbilityStates()
     {
         if (!IsServer) return;
         
-        // Preparar listas para los datos de sincronización
+        // Prepare data for sync
         List<int> indices = new List<int>();
         List<bool> readyStates = new List<bool>();
         List<float> cooldowns = new List<float>();
@@ -674,7 +606,7 @@ public class PlayerAbilityManager : NetworkBehaviour
             }
         }
         
-        // Enviar datos a todos los clientes
+        // Send to clients
         if (indices.Count > 0)
         {
             SyncAbilityStatesClientRpc(indices.ToArray(), readyStates.ToArray(), cooldowns.ToArray());
@@ -684,12 +616,12 @@ public class PlayerAbilityManager : NetworkBehaviour
     [ClientRpc]
     private void SyncAbilityStatesClientRpc(int[] indices, bool[] readyStates, float[] cooldowns)
     {
-        if (IsServer) return; // El servidor ya tiene la información
+        if (IsServer) return; // Server already has the data
         
+        // Apply cooldown states
         for (int i = 0; i < indices.Length; i++)
         {
             int index = indices[i];
-            bool isReady = readyStates[i];
             float remainingCooldown = cooldowns[i];
             
             if (index >= 0 && index < abilities.Count)
@@ -702,18 +634,17 @@ public class PlayerAbilityManager : NetworkBehaviour
             }
         }
         
-        // Sincronizar con sistema antiguo
+        // Sync with legacy system
         SyncLegacySystem();
     }
     
     [ServerRpc]
     private void RequestSyncServerRpc()
     {
-        // El cliente solicita sincronización, simplemente llamamos a SyncAbilityStates
         SyncAbilityStates();
     }
     
-    // Resetear todas las habilidades (ej: después de morir)
+    // Reset all abilities
     public void ResetAllAbilities()
     {
         foreach (var ability in abilities)
@@ -726,7 +657,6 @@ public class PlayerAbilityManager : NetworkBehaviour
         
         if (IsServer)
         {
-            // Notificar a los clientes
             ResetAllAbilitiesClientRpc();
         }
     }
@@ -734,7 +664,7 @@ public class PlayerAbilityManager : NetworkBehaviour
     [ClientRpc]
     private void ResetAllAbilitiesClientRpc()
     {
-        if (IsServer) return; // El servidor ya lo hizo
+        if (IsServer) return; // Server already reset abilities
         
         foreach (var ability in abilities)
         {
@@ -744,7 +674,56 @@ public class PlayerAbilityManager : NetworkBehaviour
             }
         }
         
-        // Sincronizar con sistema antiguo
+        // Sync with legacy system
+        SyncLegacySystem();
+    }
+    
+    // Initialize abilities from ability definitions
+    public void InitializeAbilities(List<AbilityDefinition> abilityDefinitions)
+    {
+        // Remove existing abilities
+        RemoveAllAbilities();
+        
+        if (abilityDefinitions == null || abilityDefinitions.Count == 0)
+        {
+            Debug.LogWarning("[PlayerAbilityManager] No ability definitions provided");
+            return;
+        }
+        
+        // Add each ability from definitions
+        for (int i = 0; i < abilityDefinitions.Count; i++)
+        {
+            var def = abilityDefinitions[i];
+            if (def == null || string.IsNullOrEmpty(def.abilityType))
+            {
+                Debug.LogWarning($"[PlayerAbilityManager] Invalid ability definition at index {i}");
+                continue;
+            }
+            
+            // Get ability type
+            Type abilityType = Type.GetType(def.abilityType);
+            if (abilityType == null || !typeof(BaseAbility).IsAssignableFrom(abilityType))
+            {
+                Debug.LogError($"[PlayerAbilityManager] Invalid ability type: {def.abilityType}");
+                continue;
+            }
+            
+            // Add ability
+            BaseAbility ability = AddAbilityByType(abilityType, i);
+            if (ability != null)
+            {
+                // Configure properties
+                ability.abilityName = def.abilityName;
+                ability.activationKey = def.activationKey;
+                ability.manaCost = def.manaCost;
+                ability.cooldown = def.cooldown;
+                ability.icon = def.icon;
+                
+                Debug.Log($"[PlayerAbilityManager] Added ability: {ability.abilityName} to slot {i}");
+            }
+        }
+        
+        // Sync with legacy system
         SyncLegacySystem();
     }
 }

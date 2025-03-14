@@ -1,8 +1,10 @@
 using Unity.Netcode;
 using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
 using PlayerAbilities;
 using System;
+
 // Base class for all heroes
 public class Hero : NetworkBehaviour
 {
@@ -13,29 +15,27 @@ public class Hero : NetworkBehaviour
     [Header("Visual")]
     [SerializeField] private GameObject heroModel;
     
-    // Network variables for hero-specific state
+    // Network variables
     private NetworkVariable<int> heroLevel = new NetworkVariable<int>(
         1, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     
-    // Referencias de componentes
+    // Component references
     protected PlayerNetwork playerNetwork;
     protected PlayerStats playerStats;
-    protected PlayerAbilityManager abilityManager; // Actualizado a PlayerAbilityManager
+    protected PlayerAbilityManager abilityManager;
     protected PlayerCombat playerCombat;
     
-    // Called when the hero is first created
     protected virtual void Awake()
     {
         // Get references to components
         playerNetwork = GetComponent<PlayerNetwork>();
         playerStats = GetComponent<PlayerStats>();
-        abilityManager = GetComponent<PlayerAbilityManager>(); // Actualizado
+        abilityManager = GetComponent<PlayerAbilityManager>();
         playerCombat = GetComponent<PlayerCombat>();
         
-        // Verificar componentes críticos
         if (abilityManager == null)
         {
-            Debug.LogWarning($"[Hero] No se encontró PlayerAbilityManager en {gameObject.name}. Algunas funcionalidades pueden no estar disponibles.");
+            Debug.LogWarning($"[Hero] No PlayerAbilityManager found on {gameObject.name}. Some functionality may be unavailable.");
         }
     }
     
@@ -43,150 +43,101 @@ public class Hero : NetworkBehaviour
     {
         base.OnNetworkSpawn();
         
-        // Initialize hero-specific state
+        Debug.Log($"[Hero] OnNetworkSpawn for {heroName} - IsOwner: {IsOwner}, IsServer: {IsServer}");
+        
+        // Initialize hero state
         if (IsServer)
         {
             heroLevel.Value = 1;
         }
         
-        // Setup hero visuals
+        // Setup visual elements
         SetupHeroVisuals();
         
-        // Initialize hero abilities (solo si somos servidor o dueño)
-        if (IsServer || IsOwner)
-        {
-            // Usar un pequeño delay para asegurar que todos los componentes estén listos
-            StartCoroutine(DelayedAbilityInitialization());
-        }
+        // Initialize abilities after a short delay
+        StartCoroutine(DelayedAbilityInitialization());
     }
     
-    private System.Collections.IEnumerator DelayedAbilityInitialization()
+    private IEnumerator DelayedAbilityInitialization()
     {
-        // Esperar un breve momento
+        // Wait a moment for all components to be ready
         yield return new WaitForSeconds(0.5f);
         
-        // Inicializar habilidades
-        InitializeHeroAbilities();
+        // Initialize abilities
+        if (IsServer || IsOwner)
+        {
+            InitializeHeroAbilities();
+        }
     }
     
     protected virtual void SetupHeroVisuals()
     {
-        // Apply hero-specific visual settings
-        // This could include setting up materials, animations, etc.
-        
-        // Enable the correct hero model if we have multiple
+        // Activate the hero model if it exists
         if (heroModel != null)
         {
             heroModel.SetActive(true);
         }
+        
+        // Override in derived classes for hero-specific visual setup
     }
     
-    // Level up the hero
-    public virtual void LevelUp()
+    // Ability initialization - can be overridden in derived hero classes
+    public virtual void InitializeHeroAbilities()
     {
-        if (!IsServer) 
+        Debug.Log($"[Hero] Initializing abilities for {heroName}");
+        
+        if (abilityManager == null)
         {
-            LevelUpServerRpc();
+            abilityManager = GetComponent<PlayerAbilityManager>();
+        }
+        
+        if (abilityManager == null)
+        {
+            Debug.LogError("[Hero] No PlayerAbilityManager found!");
             return;
         }
         
-        heroLevel.Value++;
+        // Clear existing abilities
+        abilityManager.RemoveAllAbilities();
         
-        // Increase stats on level up
-        if (playerStats != null)
+        // Look for a matching HeroDefinition
+        HeroDefinition myDefinition = FindHeroDefinition();
+        
+        if (myDefinition != null && myDefinition.abilities.Count > 0)
         {
-            // Example: Increase max health and mana
-            float newMaxHealth = playerStats.MaxHealth + (50 * heroLevel.Value);
-            float newMaxMana = playerStats.MaxMana + (25 * heroLevel.Value);
-            
-            playerStats.SetMaxHealth(newMaxHealth);
-            playerStats.SetMaxMana(newMaxMana);
-            
-            // Heal on level up
-            playerStats.Heal(newMaxHealth);
-            playerStats.RestoreMana(newMaxMana);
+            // Add abilities from definition
+            AddAbilitiesFromDefinition(myDefinition);
         }
-        
-        // Notify clients about the level up
-        OnLevelUpClientRpc(heroLevel.Value);
-    }
-    
-    [ServerRpc]
-    private void LevelUpServerRpc()
-    {
-        LevelUp();
-    }
-    
-    [ClientRpc]
-    private void OnLevelUpClientRpc(int newLevel)
-    {
-        Debug.Log($"{heroName} leveled up to level {newLevel}!");
-        
-        // Play level up effects
-        PlayLevelUpEffects();
-    }
-    
-    protected virtual void PlayLevelUpEffects()
-    {
-        // Play particle effects, sounds, etc.
-        
-        // Example: Simple debug message
-        if (IsOwner)
+        else
         {
-            Debug.Log($"<color=yellow>Level Up!</color> Your {heroName} is now level {heroLevel.Value}");
-            
-            // Additional local effects for the owner could be added here
+            Debug.LogWarning($"[Hero] No HeroDefinition found for {heroName} or no abilities defined");
+            AddDefaultAbilities();
         }
     }
     
-    // Hero-specific update logic
-    protected virtual void Update()
+    // Helper method to find a matching hero definition
+    private HeroDefinition FindHeroDefinition()
     {
-        // Base update logic that applies to all heroes
-        // Derived classes can override this to add hero-specific behavior
-    }
-    
-    // Método mejorado para inicializar habilidades de héroe
-    // Método mejorado para inicializar habilidades de héroe
-public virtual void InitializeHeroAbilities()
-{
-    Debug.Log($"[Hero] Initializing abilities for {heroName}");
-    
-    if (abilityManager == null)
-    {
-        abilityManager = GetComponent<PlayerAbilityManager>();
-    }
-    
-    if (abilityManager == null)
-    {
-        Debug.LogError("[Hero] No PlayerAbilityManager found!");
-        return;
-    }
-    
-    // Clear existing abilities
-    abilityManager.RemoveAllAbilities();
-    
-    // Find the HeroDefinition for this hero
-    HeroDefinition myDefinition = null;
-    HeroDefinition[] allDefinitions = Resources.FindObjectsOfTypeAll<HeroDefinition>();
-    foreach (var def in allDefinitions)
-    {
-        if (def.heroName == heroName)
+        HeroDefinition[] allDefinitions = Resources.FindObjectsOfTypeAll<HeroDefinition>();
+        foreach (var def in allDefinitions)
         {
-            myDefinition = def;
-            break;
+            if (def.heroName == heroName)
+            {
+                return def;
+            }
         }
+        return null;
     }
     
-    // Initialize from Hero Definition if found
-    if (myDefinition != null && myDefinition.abilities.Count > 0)
+    // Add abilities from a hero definition
+    private void AddAbilitiesFromDefinition(HeroDefinition definition)
     {
-        Debug.Log($"[Hero] Using abilities from HeroDefinition for {heroName}");
+        Debug.Log($"[Hero] Adding abilities from HeroDefinition for {heroName}");
         
-        // Add each ability from the definition
-        for (int i = 0; i < myDefinition.abilities.Count; i++)
+        // Add each ability
+        for (int i = 0; i < definition.abilities.Count; i++)
         {
-            var abilityDef = myDefinition.abilities[i];
+            var abilityDef = definition.abilities[i];
             if (string.IsNullOrEmpty(abilityDef.abilityType))
                 continue;
                 
@@ -195,14 +146,20 @@ public virtual void InitializeHeroAbilities()
                 Type abilityType = Type.GetType(abilityDef.abilityType);
                 if (abilityType != null && typeof(BaseAbility).IsAssignableFrom(abilityType))
                 {
-                    // Use reflection to call AddAbility with the correct generic type
-                    var methodInfo = typeof(PlayerAbilityManager).GetMethod("AddAbility");
-                    var genericMethod = methodInfo.MakeGenericMethod(abilityType);
+                    // Add the ability
+                    BaseAbility ability = abilityManager.AddAbilityByType(abilityType, i);
                     
-                    // Call the method with the slot parameter (use i as the slot index)
-                    BaseAbility ability = (BaseAbility)genericMethod.Invoke(abilityManager, new object[] { i });
-                    
-                    Debug.Log($"[Hero] Added ability: {abilityDef.abilityName} to slot {i}");
+                    // Configure ability properties if needed
+                    if (ability != null)
+                    {
+                        ability.abilityName = abilityDef.abilityName;
+                        ability.activationKey = abilityDef.activationKey;
+                        ability.manaCost = abilityDef.manaCost;
+                        ability.cooldown = abilityDef.cooldown;
+                        ability.icon = abilityDef.icon;
+                        
+                        Debug.Log($"[Hero] Added ability: {abilityDef.abilityName} to slot {i}");
+                    }
                 }
                 else
                 {
@@ -215,24 +172,101 @@ public virtual void InitializeHeroAbilities()
             }
         }
     }
-    else
-    {
-        Debug.Log($"[Hero] No HeroDefinition found for {heroName} or no abilities defined");
-    }
-}
     
-    // This method can be called when the hero's abilities should be activated based on game state
+    // Add default abilities when no definition is found
+    protected virtual void AddDefaultAbilities()
+    {
+        Debug.Log($"[Hero] Adding default abilities for {heroName}");
+        
+        // This can be overridden in derived classes to add specific abilities
+        // Default implementation does nothing
+    }
+    
+    // Hero update logic - can be overridden in derived classes
+    protected virtual void Update()
+    {
+        // Base update logic for all heroes
+        // Derived classes can override for hero-specific behavior
+    }
+    
+    // Method to level up the hero
+    public virtual void LevelUp()
+    {
+        if (!IsServer)
+        {
+            LevelUpServerRpc();
+            return;
+        }
+        
+        heroLevel.Value++;
+        
+        // Update stats based on new level
+        if (playerStats != null)
+        {
+            float newMaxHealth = CalculateLevelHealth(heroLevel.Value);
+            float newMaxMana = CalculateLevelMana(heroLevel.Value);
+            
+            playerStats.SetMaxHealth(newMaxHealth);
+            playerStats.SetMaxMana(newMaxMana);
+            
+            // Heal on level up
+            playerStats.Heal(newMaxHealth);
+            playerStats.RestoreMana(newMaxMana);
+        }
+        
+        // Notify clients
+        OnLevelUpClientRpc(heroLevel.Value);
+    }
+    
+    // Calculate health based on level (can be overridden)
+    protected virtual float CalculateLevelHealth(int level)
+    {
+        // Default formula
+        return 100f + (level * 50f);
+    }
+    
+    // Calculate mana based on level (can be overridden)
+    protected virtual float CalculateLevelMana(int level)
+    {
+        // Default formula
+        return 50f + (level * 25f);
+    }
+    
+    [ServerRpc]
+    private void LevelUpServerRpc()
+    {
+        LevelUp();
+    }
+    
+    [ClientRpc]
+    private void OnLevelUpClientRpc(int newLevel)
+    {
+        Debug.Log($"{heroName} leveled up to level {newLevel}!");
+        PlayLevelUpEffects();
+    }
+    
+    protected virtual void PlayLevelUpEffects()
+    {
+        // Play visual/audio effects for level up
+        // Default implementation just shows a log message for the owner
+        if (IsOwner)
+        {
+            Debug.Log($"<color=yellow>Level Up!</color> Your {heroName} is now level {heroLevel.Value}");
+        }
+    }
+    
+    // Public method to activate all hero abilities
     public virtual void ActivateHeroAbilities()
     {
-        // Enable the hero's abilities and make them ready to use
-        // This could be called when a game state changes, like exiting an intro phase
+        // Enable abilities in derived classes
+        Debug.Log($"[Hero] Activating abilities for {heroName}");
     }
     
-    // This method can be called to override default movement options or add hero-specific movement
+    // Process hero-specific movement
     public virtual void ProcessMovement()
     {
-        // By default, do nothing - use the normal PlayerNetwork movement
-        // Override in derived classes to implement hero-specific movement
+        // Default: use normal PlayerNetwork movement
+        // Override in derived classes for hero-specific movement
     }
     
     // Get hero level
@@ -241,42 +275,29 @@ public virtual void InitializeHeroAbilities()
         return heroLevel.Value;
     }
     
-    // Helper to access player colors by team
+    // Get team color
     protected Color GetTeamColor()
     {
-        // This assumes there's a method to get team ID from PlayerNetwork
-        // and that team colors are defined somewhere (e.g., in GameManager)
-        if (playerNetwork != null)
-        {
-            // Example implementation - would need to be adjusted based on your team system
-            int teamId = GetTeamId();
-            
-            if (teamId == 1)
-            {
-                return Color.blue; // Team 1 color
-            }
-            else if (teamId == 2)
-            {
-                return Color.red; // Team 2 color
-            }
-        }
+        int teamId = GetTeamId();
         
-        return Color.white; // Default
+        // Default team colors
+        if (teamId == 1)
+            return Color.blue;
+        else if (teamId == 2)
+            return Color.red;
+        else
+            return Color.white;
     }
     
-    // Get team ID - you'd need to implement this based on your team system
+    // Get team ID
     protected int GetTeamId()
     {
-        // Example implementation - would need to be adjusted based on your team system
         if (playerNetwork != null)
         {
-            // This assumes you have a way to get team ID from the network component
-            // Could be a property in PlayerNetwork or stored in a dictionary in GameManager
-            
-            // Placeholder implementation
-            return (int)(OwnerClientId % 2) + 1; // Simple way to divide into 2 teams
+            // Simple way to get team ID based on client ID
+            // In a real implementation, you'd get this from your team system
+            return (int)(OwnerClientId % 2) + 1;
         }
-        
-        return 1; // Default to team 1
+        return 1; // Default
     }
 }

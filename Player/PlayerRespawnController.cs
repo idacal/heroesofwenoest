@@ -2,81 +2,61 @@ using UnityEngine;
 using Unity.Netcode;
 using System.Collections;
 using System.Collections.Generic;
+
 public class PlayerRespawnController : NetworkBehaviour
 {
-    [Header("Configuración de Respawn")]
-    [SerializeField] private float fallThreshold = -10f; // Altura a la que se considera caída
-    [SerializeField] private float respawnDelay = 1.5f; // Tiempo antes de reaparecer
-    [SerializeField] private float invulnerabilityTime = 2.0f; // Tiempo de invulnerabilidad después de respawn
+    [Header("Respawn Configuration")]
+    [SerializeField] private float fallThreshold = -10f; // Height at which player is considered fallen
+    [SerializeField] private float respawnDelay = 1.5f; // Time before respawning
+    [SerializeField] private float invulnerabilityTime = 2.0f; // Time of invulnerability after respawn
     
-    [Header("Referencias de Spawn")]
-    [SerializeField] private Transform[] team1SpawnPoints; // Puntos para equipo 1
-    [SerializeField] private Transform[] team2SpawnPoints; // Puntos para equipo 2
+    [Header("Spawn References")]
+    [SerializeField] private Transform[] team1SpawnPoints; // Team 1 spawn points
+    [SerializeField] private Transform[] team2SpawnPoints; // Team 2 spawn points
     
-    [Header("Efectos")]
-    [SerializeField] private GameObject deathEffectPrefab; // Efecto al morir
-    [SerializeField] private GameObject respawnEffectPrefab; // Efecto al reaparecer
-    [SerializeField] private Material ghostMaterial; // Material semitransparente para invulnerabilidad
-
-    // NUEVO: Para monitoreo de visibilidad
-    [Header("Visibilidad")]
-    [SerializeField] private float visibilityCheckInterval = 2.0f; // Intervalo para verificar visibilidad
-    [SerializeField] private bool autoFixVisibility = true; // Arreglar automáticamente problemas de visibilidad
-    private float visibilityCheckTimer = 0f;
-    private int consecutiveInvisibleFrames = 0;
-
-    // Variables de red
+    [Header("Effects")]
+    [SerializeField] private GameObject deathEffectPrefab; // Effect shown when player dies
+    [SerializeField] private GameObject respawnEffectPrefab; // Effect shown when player respawns
+    [SerializeField] private Material ghostMaterial; // Semi-transparent material for invulnerability
+    
+    [Header("Visibility Checks")]
+    [SerializeField] private bool autoFixVisibility = true; // Auto-fix visibility issues
+    
+    // Network variables
     private NetworkVariable<bool> isRespawning = new NetworkVariable<bool>(
         false, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     
     private NetworkVariable<int> playerTeam = new NetworkVariable<int>(
         1, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     
-    // Referencias de componentes
+    // Component references
     private PlayerNetwork playerNetwork;
-    private PlayerAbilityController abilityController;
+    private PlayerAbilityManager abilityManager;
     private PlayerStats playerStats;
     private Collider playerCollider;
     private Renderer[] playerRenderers;
     private Material[] originalMaterials;
     
-    // Variables para seguimiento
+    // State tracking
     private Vector3 lastValidPosition;
     private bool isInvulnerable = false;
     private int fallCount = 0;
-    
-    // Nueva variable para indicar si el respawn es por muerte (vs. caída)
     private bool isDeathRespawn = false;
     
-    // Referencia al Game Manager para notificar muertes
-    private MOBAGameManager gameManager;
-    
-    // Referencia a la cámara
-    private MOBACamera playerCamera;
-
-    // NUEVO: Variable para rastrear si el jugador ha sido inicializado correctamente
-    private bool isPlayerInitialized = false;
-
     public override void OnNetworkSpawn()
     {
         base.OnNetworkSpawn();
         
-        // Obtener referencias
+        // Get component references
         playerNetwork = GetComponent<PlayerNetwork>();
-        abilityController = GetComponent<PlayerAbilityController>();
+        abilityManager = GetComponent<PlayerAbilityManager>();
         playerStats = GetComponent<PlayerStats>();
         playerCollider = GetComponent<Collider>();
         
-        // MODIFICADO: Obtener todos los renderers, incluyendo inactivos
+        // Get all renderers, including inactive ones
         playerRenderers = GetComponentsInChildren<Renderer>(true);
         
-        // Buscar la cámara del jugador
-        if (IsOwner)
-        {
-            StartCoroutine(FindPlayerCamera());
-        }
-        
-        // Guardar materiales originales
+        // Save original materials
         if (playerRenderers.Length > 0)
         {
             originalMaterials = new Material[playerRenderers.Length];
@@ -89,49 +69,34 @@ public class PlayerRespawnController : NetworkBehaviour
             }
         }
         
-        // Suscribirse a cambios en la variable de respawn
+        // Subscribe to respawn state changes
         isRespawning.OnValueChanged += OnRespawningChanged;
         
-        // Inicializar última posición válida
+        // Initialize last valid position
         lastValidPosition = transform.position;
         
-        // Buscar referencia al Game Manager
-        if (IsServer)
-        {
-            gameManager = FindObjectOfType<MOBAGameManager>();
-        }
+        Debug.Log($"[RespawnController] Initialized for player {OwnerClientId}, Team {playerTeam.Value}");
         
-        Debug.Log($"[RespawnController] Inicializado para jugador {OwnerClientId}, Equipo {playerTeam.Value}");
-        
-        // NUEVO: Forzar visibilidad inmediatamente
+        // Force visibility immediately
         ForceVisibility();
         
-        // NUEVO: Marcar como inicializado
-        isPlayerInitialized = true;
-        
-        // NUEVO: Programar verificación continua de visibilidad
-        StartCoroutine(ContinuousVisibilityCheck());
+        // Start periodic visibility checks
+        if (autoFixVisibility)
+        {
+            StartCoroutine(PeriodicVisibilityChecks());
+        }
     }
     
-    // NUEVO: Corrutina para verificación continua de visibilidad
-    private IEnumerator ContinuousVisibilityCheck()
+    private IEnumerator PeriodicVisibilityChecks()
     {
-        // Esperar un momento para que todo se inicialice correctamente
-        yield return new WaitForSeconds(1.0f);
-        
-        // Número de verificaciones a realizar
-        int numChecks = 10;
-        
-        for (int i = 0; i < numChecks; i++)
+        // Initial checks more frequently
+        for (int i = 0; i < 5; i++)
         {
-            // Forzar visibilidad en cada verificación
-            ForceVisibility();
-            
-            // Esperar antes de la siguiente verificación
             yield return new WaitForSeconds(0.5f);
+            ForceVisibility();
         }
         
-        // Continuar con verificaciones periódicas más espaciadas
+        // Then less frequent checks
         while (true)
         {
             yield return new WaitForSeconds(2.0f);
@@ -143,108 +108,55 @@ public class PlayerRespawnController : NetworkBehaviour
         }
     }
     
-    private IEnumerator FindPlayerCamera()
-    {
-        // Esperar un poco para que la cámara se inicialice
-        yield return new WaitForSeconds(0.5f);
-        
-        // Buscar todas las cámaras de tipo MOBA
-        MOBACamera[] cameras = FindObjectsOfType<MOBACamera>();
-        foreach (MOBACamera cam in cameras)
-        {
-            // Verificar si esta cámara tiene como objetivo a este jugador
-            if (cam.GetTarget() == transform)
-            {
-                playerCamera = cam;
-                Debug.Log("[RespawnController] Cámara del jugador encontrada");
-                break;
-            }
-        }
-        
-        // Si no encontramos la cámara, intentar de nuevo más tarde
-        if (playerCamera == null)
-        {
-            Debug.LogWarning("[RespawnController] No se encontró la cámara del jugador, reintentando en 1 segundo...");
-            yield return new WaitForSeconds(1.0f);
-            StartCoroutine(FindPlayerCamera());
-        }
-    }
-    
-    // NUEVO: Método para verificar y arreglar problemas de visibilidad
     private void CheckAndFixVisibility()
     {
-        bool hasVisibleRenderers = false;
+        // Count visible renderers
+        int visibleCount = 0;
         
-        // Actualizar la lista de renderers
+        // Update renderer list
         playerRenderers = GetComponentsInChildren<Renderer>(true);
         
-        // Verificar si hay algún renderer visible
         foreach (var renderer in playerRenderers)
         {
             if (renderer != null && renderer.enabled && renderer.isVisible)
             {
-                hasVisibleRenderers = true;
-                break;
+                visibleCount++;
             }
         }
         
-        // Si no hay renderers visibles, forzar visibilidad
-        if (!hasVisibleRenderers)
+        // If no visible renderers, force visibility
+        if (visibleCount == 0 && playerRenderers.Length > 0)
         {
-            consecutiveInvisibleFrames++;
-            
-            // Si ha estado invisible por varios frames consecutivos, intentar arreglar
-            if (consecutiveInvisibleFrames >= 3)
-            {
-                Debug.LogWarning($"[RespawnController] Jugador {OwnerClientId} invisible por {consecutiveInvisibleFrames} frames consecutivos. Forzando visibilidad.");
-                ForceVisibility();
-                consecutiveInvisibleFrames = 0;
-            }
-        }
-        else
-        {
-            // Resetear contador si es visible
-            consecutiveInvisibleFrames = 0;
+            Debug.LogWarning($"[RespawnController] Player {OwnerClientId} has no visible renderers. Forcing visibility.");
+            ForceVisibility();
         }
     }
     
     private void Update()
     {
-        // Solo verificar caídas si no estamos ya en proceso de respawn
+        // Only check for falls if not already respawning
         if (!isRespawning.Value)
         {
-            // Si estamos por encima de un umbral seguro, actualizar la última posición válida
+            // Update last valid position if above threshold
             if (transform.position.y > fallThreshold + 2.0f)
             {
                 lastValidPosition = transform.position;
             }
             
-            // Verificar si el jugador cayó por debajo del umbral
+            // Check if player fell below threshold
             if (transform.position.y < fallThreshold)
             {
                 if (IsServer)
                 {
-                    // Si somos el servidor, iniciar el proceso de respawn
-                    isDeathRespawn = false; // No es una muerte, es una caída
+                    // Server handles respawn directly
+                    isDeathRespawn = false; // It's a fall, not a death
                     StartRespawnProcess();
                 }
                 else if (IsOwner)
                 {
-                    // Si somos el cliente, notificar al servidor
+                    // Client notifies server
                     NotifyFallServerRpc();
                 }
-            }
-        }
-        
-        // NUEVO: Verificar visibilidad periódicamente
-        if (IsOwner && autoFixVisibility && isPlayerInitialized)
-        {
-            visibilityCheckTimer += Time.deltaTime;
-            
-            if (visibilityCheckTimer >= visibilityCheckInterval)
-            {
-                visibilityCheckTimer = 0f;
-                CheckAndFixVisibility();
             }
         }
     }
@@ -252,22 +164,20 @@ public class PlayerRespawnController : NetworkBehaviour
     [ServerRpc]
     private void NotifyFallServerRpc()
     {
-        // Verificar que no estemos ya en respawn
+        // Verify we're not already respawning
         if (!isRespawning.Value)
         {
-            isDeathRespawn = false; // Marcar como caída, no muerte
+            isDeathRespawn = false; // Mark as fall, not death
             StartRespawnProcess();
         }
     }
     
-    // Método público para forzar un respawn (usado por PlayerStats cuando el jugador muere)
+    // Public method for PlayerStats to call when player dies
     public void ForceRespawn()
     {
         if (IsServer)
         {
-            isDeathRespawn = true; // Marcar como respawn por muerte
-            
-            // IMPORTANTE: NO crear un jugador nuevo, simplemente utilizar el proceso de respawn
+            isDeathRespawn = true; // Mark as death respawn
             StartRespawnProcess();
         }
         else
@@ -279,80 +189,152 @@ public class PlayerRespawnController : NetworkBehaviour
     [ServerRpc(RequireOwnership = false)]
     private void ForceRespawnServerRpc()
     {
-        isDeathRespawn = true; // Marcar como respawn por muerte
+        isDeathRespawn = true; // Mark as death respawn
         StartRespawnProcess();
     }
     
+    // Force visibility - called to ensure player is visible
+    public void ForceVisibility()
+    {
+        Debug.Log($"[RespawnController] Forcing visibility for player {OwnerClientId}");
+        
+        try
+        {
+            // Ensure GameObject is active
+            gameObject.SetActive(true);
+            
+            // Reset scale to normal
+            transform.localScale = Vector3.one;
+            
+            // Activate all renderers
+            Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
+            foreach (var renderer in renderers)
+            {
+                if (renderer == null) continue;
+                
+                // Ensure GameObject is active
+                renderer.gameObject.SetActive(true);
+                
+                // Enable renderer
+                renderer.enabled = true;
+                
+                // Fix material transparency if needed
+                if (renderer.material != null)
+                {
+                    Color color = renderer.material.color;
+                    color.a = 1.0f;
+                    renderer.material.color = color;
+                }
+            }
+            
+            // Ensure colliders are active
+            Collider[] colliders = GetComponentsInChildren<Collider>(true);
+            foreach (var collider in colliders)
+            {
+                collider.enabled = true;
+            }
+            
+            // Reset Rigidbody if it exists
+            Rigidbody rb = GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+                rb.isKinematic = false;
+                rb.useGravity = true;
+            }
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[RespawnController] Error in ForceVisibility: {e.Message}");
+        }
+    }
+    
+    // Start the respawn process (server-side only)
     private void StartRespawnProcess()
     {
         if (!IsServer) return;
         
-        string reason = isDeathRespawn ? "murió" : "cayó de la plataforma";
-        Debug.Log($"[RespawnController] Jugador {OwnerClientId} {reason}. Iniciando respawn...");
+        string reason = isDeathRespawn ? "died" : "fell off the platform";
+        Debug.Log($"[RespawnController] Player {OwnerClientId} {reason}. Starting respawn...");
         
-        // Activar el estado de respawn
+        // Set respawning state
         isRespawning.Value = true;
         
-        // Incrementar contador de caídas (solo si es una caída real)
+        // Increment fall counter if it's a fall
         if (!isDeathRespawn)
         {
             fallCount++;
         }
         
-        // Notificar la caída/muerte al Game Manager si existe
-        if (gameManager != null)
-        {
-            // Aquí podrías llamar a un método en el Game Manager para registrar la caída/muerte
-            // Por ejemplo: gameManager.RegisterPlayerDeath(OwnerClientId, playerTeam.Value, isDeathRespawn);
-        }
-        
-        // Mostrar efecto de muerte en la posición actual
+        // Show death effect
         SpawnDeathEffectClientRpc(transform.position, isDeathRespawn);
         
-        // Programar el respawn después de un delay
+        // Start respawn timer
         StartCoroutine(RespawnAfterDelay());
     }
     
+    // Respawn after delay
     private IEnumerator RespawnAfterDelay()
-{
-    if (!IsServer) yield break;
-    
-    // Esperar el tiempo de respawn
-    yield return new WaitForSeconds(respawnDelay);
-    
-    // Verificar que el jugador sigue existiendo antes de entrar al try
-    if (gameObject == null || !IsSpawned)
     {
-        Debug.LogError($"[RespawnController] El jugador {OwnerClientId} ya no existe.");
-        yield break;
+        if (!IsServer) yield break;
+        
+        // Wait for respawn delay
+        yield return new WaitForSeconds(respawnDelay);
+        
+        try
+        {
+            // Get respawn position
+            Vector3 spawnPosition = GetRespawnPosition();
+            
+            // Teleport player
+            transform.position = spawnPosition;
+            
+            // Reset physics
+            Rigidbody rb = GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+            
+            // Restore health and mana
+            if (playerStats != null)
+            {
+                playerStats.Heal(playerStats.MaxHealth);
+                playerStats.RestoreMana(playerStats.MaxMana);
+            }
+            
+            // Tell all clients to teleport this player
+            TeleportPlayerClientRpc(spawnPosition);
+            
+            // Wait a moment for everything to settle
+            yield return new WaitForSeconds(0.5f);
+            
+            // Exit respawn state
+            isRespawning.Value = false;
+            
+            // Start invulnerability period
+            StartInvulnerabilityClientRpc();
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"[RespawnController] Error during respawn: {e.Message}");
+            
+            // Reset state even if there was an error
+            isRespawning.Value = false;
+        }
     }
     
-    Vector3 spawnPosition;
-    
-    try
+    [ClientRpc]
+    private void TeleportPlayerClientRpc(Vector3 position)
     {
-        // Determinar punto de spawn
-        spawnPosition = GetRespawnPosition();
+        Debug.Log($"[RespawnController] Teleporting to {position}");
         
-        // Verificar validez
-        if (float.IsNaN(spawnPosition.x) || float.IsNaN(spawnPosition.y) || float.IsNaN(spawnPosition.z))
-        {
-            spawnPosition = new Vector3(0, 5, 0);
-        }
+        // Set position
+        transform.position = position;
         
-        // Añadir offset
-        Vector3 offset = new Vector3(
-            UnityEngine.Random.Range(-0.5f, 0.5f),
-            0.5f,
-            UnityEngine.Random.Range(-0.5f, 0.5f)
-        );
-        spawnPosition += offset;
-        
-        // Teleportar
-        TeleportPlayerClientRpc(spawnPosition);
-        transform.position = spawnPosition;
-        
-        // Restablecer velocidad
+        // Reset physics if we have a Rigidbody
         Rigidbody rb = GetComponent<Rigidbody>();
         if (rb != null)
         {
@@ -360,413 +342,127 @@ public class PlayerRespawnController : NetworkBehaviour
             rb.angularVelocity = Vector3.zero;
         }
         
-        // Restaurar salud y maná
-        if (playerStats != null)
-        {
-            playerStats.Heal(playerStats.MaxHealth);
-            playerStats.RestoreMana(playerStats.MaxMana);
-        }
-        
-        // Forzar visibilidad
+        // Ensure player is visible
         ForceVisibility();
-    }
-    catch (System.Exception e)
-    {
-        Debug.LogError($"[RespawnController] Error: {e.Message}");
-        spawnPosition = transform.position; // Usar posición actual en caso de error
-    }
-    
-    // Estos yield están fuera del try-catch
-    yield return new WaitForSeconds(0.5f);
-    
-    isRespawning.Value = false;
-    StartInvulnerabilityClientRpc();
-    
-    if (playerNetwork != null)
-    {
-        playerNetwork.SyncTransformClientRpc(spawnPosition, transform.rotation);
-    }
-}
-    
-    public void ForceVisibility()
-    {
-        Debug.Log($"[RespawnController] Aplicando ForceVisibility agresivo para jugador {OwnerClientId}");
         
-        try
+        // If we're the owner, center the camera
+        if (IsOwner)
         {
-            // Asegurar que todo el objeto esté activo
-            gameObject.SetActive(true);
-            
-            // Asegurar que el Transform no esté en escala cero
-            if (transform.localScale.magnitude < 0.1f)
+            // Find and center camera
+            MOBACamera camera = FindPlayerCamera();
+            if (camera != null)
             {
-                transform.localScale = Vector3.one;
-                Debug.Log("[RespawnController] Corrigiendo escala cero en el jugador");
-            }
-            
-            // Obtener todos los renderers, incluyendo objetos inactivos
-            Renderer[] allRenderers = GetComponentsInChildren<Renderer>(true);
-            Debug.Log($"[RespawnController] Encontrados {allRenderers.Length} renderers");
-            
-            // Activar todos los GameObjects en la jerarquía primero
-            Transform[] allTransforms = GetComponentsInChildren<Transform>(true);
-            foreach (var trans in allTransforms)
-            {
-                trans.gameObject.SetActive(true);
-            }
-            
-            // Activar todos los renderers
-            foreach (var renderer in allRenderers)
-            {
-                if (renderer != null)
-                {
-                    // Activar el gameObject que contiene el renderer
-                    renderer.gameObject.SetActive(true);
-                    
-                    // Activar el renderer
-                    renderer.enabled = true;
-                    
-                    // Verificar si el material tiene alpha = 0
-                    if (renderer.material != null)
-                    {
-                        // Verificar si el shader es transparente
-                        if (renderer.material.color.a < 0.9f)
-                        {
-                            // Corregir alpha del material
-                            Color color = renderer.material.color;
-                            color.a = 1.0f;
-                            renderer.material.color = color;
-                            Debug.Log("[RespawnController] Corrigiendo alpha en material");
-                        }
-                        
-                        // Asegurarse que el renderQueue está en modo opaco/default si es apropiado
-                        if (renderer.material.renderQueue > 3000)
-                        {
-                            renderer.material.renderQueue = 2000; // Valor estándar
-                            Debug.Log("[RespawnController] Corrigiendo renderQueue en material");
-                        }
-                    }
-                }
-            }
-            
-            // Actualizar la lista de renderizadores para el objeto
-            playerRenderers = GetComponentsInChildren<Renderer>();
-            
-            // Verificar SkinnedMeshRenderers (común en personajes)
-            SkinnedMeshRenderer[] skinnedRenderers = GetComponentsInChildren<SkinnedMeshRenderer>(true);
-            Debug.Log($"[RespawnController] Encontrados {skinnedRenderers.Length} SkinnedMeshRenderers");
-            
-            foreach (var renderer in skinnedRenderers)
-            {
-                if (renderer != null)
-                {
-                    renderer.enabled = true;
-                    renderer.gameObject.SetActive(true);
-                    
-                    // Asegurar que el material sea visible
-                    if (renderer.material != null)
-                    {
-                        Color color = renderer.material.color;
-                        color.a = 1.0f;
-                        renderer.material.color = color;
-                        
-                        // Verificar si está oculto por el shader o renderQueue
-                        if (renderer.material.renderQueue > 3000)
-                        {
-                            renderer.material.renderQueue = 2000;
-                        }
-                    }
-                }
-            }
-            
-            // Activar MeshRenderers explícitamente
-            MeshRenderer[] meshRenderers = GetComponentsInChildren<MeshRenderer>(true);
-            Debug.Log($"[RespawnController] Encontrados {meshRenderers.Length} MeshRenderers");
-            
-            foreach (var renderer in meshRenderers)
-            {
-                if (renderer != null)
-                {
-                    renderer.enabled = true;
-                    renderer.gameObject.SetActive(true);
-                    
-                    // Forzar visibilidad del material
-                    if (renderer.material != null)
-                    {
-                        Color color = renderer.material.color;
-                        color.a = 1.0f;
-                        renderer.material.color = color;
-                    }
-                }
-            }
-            
-            // Activar colliders explícitamente
-            Collider[] colliders = GetComponentsInChildren<Collider>(true);
-            foreach (var collider in colliders)
-            {
-                collider.enabled = true;
-                collider.gameObject.SetActive(true);
-            }
-            
-            // Asegurar que Rigidbody está configurado correctamente
-            Rigidbody rb = GetComponent<Rigidbody>();
-            if (rb != null)
-            {
-                rb.isKinematic = false;
-                rb.useGravity = true;
-                rb.detectCollisions = true;
-            }
-            
-            Debug.Log($"[RespawnController] ForceVisibility completado. Activados: " +
-                      $"{allTransforms.Length} GameObjects, " +
-                      $"{playerRenderers.Length} renderers, " +
-                      $"{colliders.Length} colliders");
-                      
-            // Notificar al servidor sobre nuestra posición actual
-            if (IsOwner && playerNetwork != null)
-            {
-                playerNetwork.UpdatePositionServerRpc(transform.position, transform.rotation);
+                camera.CenterOnPlayer();
             }
         }
-        catch (System.Exception e)
+        
+        // Create respawn effect
+        if (respawnEffectPrefab != null)
         {
-            Debug.LogError($"[RespawnController] Error en ForceVisibility: {e.Message}\n{e.StackTrace}");
+            GameObject effect = Instantiate(respawnEffectPrefab, position, Quaternion.identity);
+            Destroy(effect, 3.0f);
         }
     }
     
     [ClientRpc]
-    private void TeleportPlayerClientRpc(Vector3 position)
+    private void SpawnDeathEffectClientRpc(Vector3 position, bool isDeathEffect)
     {
-        try
-        {
-            Debug.Log($"[RespawnController] TeleportPlayerClientRpc recibido. Pos={position}, IsOwner={IsOwner}");
-            
-            // NUEVO: Asegurar que todo el objeto esté activo
-            gameObject.SetActive(true);
-            
-            // Teletransportar al jugador a la posición indicada
-            transform.position = position;
-            
-            // NUEVO: Asegurar que todos los renderizadores estén activos
-            Renderer[] allRenderers = GetComponentsInChildren<Renderer>(true); // incluir inactivos
-            Debug.Log($"[RespawnController] Encontrados {allRenderers.Length} renderers en TeleportPlayerClientRpc");
-            
-            foreach (var renderer in allRenderers)
-            {
-                if (renderer != null)
-                {
-                    renderer.enabled = true;
-                    renderer.gameObject.SetActive(true);
-                }
-            }
-            
-            // Si tenemos Rigidbody, resetear su velocidad y asegurarnos que la física esté correcta
-            Rigidbody rb = GetComponent<Rigidbody>();
-            if (rb != null)
-            {
-                // Detener cualquier movimiento
-                rb.velocity = Vector3.zero;
-                rb.angularVelocity = Vector3.zero;
-                
-                // Asegurar que la gravedad esté activada
-                rb.useGravity = true;
-                rb.isKinematic = false;
-                
-                // Aplicar un pequeño impulso hacia arriba para evitar atravesar el suelo
-                rb.AddForce(Vector3.up * 2f, ForceMode.Impulse);
-            }
-            
-            // Asegurar que el collider esté habilitado
-            if (playerCollider != null)
-            {
-                playerCollider.enabled = true;
-            }
-            
-            // NUEVO: Actualizar la lista de renderizadores
-            playerRenderers = GetComponentsInChildren<Renderer>();
-            
-            // Verificar suelo y ajustar posición si es necesario
-            StartCoroutine(VerifyGroundCollision());
-            
-            // Aplicar ForceVisibility agresivamente
-            ForceVisibility();
-            
-            // Centrar la cámara en el jugador si somos el propietario
-            if (IsOwner && playerCamera != null)
-            {
-                StartCoroutine(CenterCameraNextFrame());
-            }
-            
-            // Crear efecto visual de respawn
-            if (respawnEffectPrefab != null)
-            {
-                GameObject effect = Instantiate(respawnEffectPrefab, position, Quaternion.identity);
-                Destroy(effect, 3.0f);
-            }
-            
-            Debug.Log($"[RespawnController] Jugador {OwnerClientId} reapareció en {position}");
-            
-            // NUEVO: Notificar al PlayerNetwork para sincronizar la posición con el servidor
-            PlayerNetwork playerNet = GetComponent<PlayerNetwork>();
-            if (playerNet != null && IsOwner)
-            {
-                playerNet.UpdatePositionServerRpc(position, transform.rotation);
-            }
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogError($"[RespawnController] Error en TeleportPlayerClientRpc: {e.Message}\n{e.StackTrace}");
-        }
-    }
-    
-    // NUEVO: Método para verificar la colisión con el suelo
-    private IEnumerator VerifyGroundCollision()
-    {
-        // Esperar a que pase un frame para que la física se actualice
-        yield return new WaitForFixedUpdate();
+        // Create appropriate effect
+        GameObject effect = null;
         
-        // Verificar si hay suelo debajo del jugador mediante un raycast
-        RaycastHit hit;
-        float maxGroundCheckDistance = 50f;
-        float groundOffset = 1.0f; // Altura sobre el suelo a mantener
-        
-        if (Physics.Raycast(transform.position, Vector3.down, out hit, maxGroundCheckDistance))
+        if (isDeathEffect && deathEffectPrefab != null)
         {
-            // Si estamos muy lejos del suelo, ajustar posición
-            if (hit.distance > 5f)
-            {
-                // Posición ajustada: punto de impacto + offset en Y
-                Vector3 adjustedPosition = hit.point + Vector3.up * groundOffset;
-                transform.position = adjustedPosition;
-                
-                // Ajustar Rigidbody si existe
-                Rigidbody rb = GetComponent<Rigidbody>();
-                if (rb != null)
-                {
-                    rb.velocity = Vector3.zero;
-                    rb.position = adjustedPosition;
-                }
-                
-                Debug.Log($"[RespawnController] Ajustando posición para evitar caída. Distancia al suelo: {hit.distance}");
-            }
+            // Use death effect prefab if available
+            effect = Instantiate(deathEffectPrefab, position, Quaternion.identity);
         }
         else
         {
-            // No se encontró suelo, intentar reposicionar en el origen con un offset en Y
-            Debug.LogWarning("[RespawnController] No se encontró suelo debajo del jugador. Reposicionando en origen.");
+            // Simple particle effect for falls
+            ParticleSystem.MainModule main;
             
-            // Posicionar en el origen con altura segura
-            Vector3 safePosition = new Vector3(0f, 5f, 0f);
-            transform.position = safePosition;
+            // Create basic particle effect
+            GameObject particleObj = new GameObject("FallEffect");
+            particleObj.transform.position = position;
             
-            // Ajustar Rigidbody si existe
-            Rigidbody rb = GetComponent<Rigidbody>();
-            if (rb != null)
+            ParticleSystem particles = particleObj.AddComponent<ParticleSystem>();
+            main = particles.main;
+            main.startSpeed = 3.0f;
+            main.startSize = 0.5f;
+            main.startLifetime = 1.0f;
+            main.startColor = Color.white;
+            
+            var emission = particles.emission;
+            emission.rateOverTime = 0;
+            var burst = new ParticleSystem.Burst(0.0f, 30);
+            emission.SetBurst(0, burst);
+            
+            effect = particleObj;
+        }
+        
+        // If this is our own death, additional effects
+        if (IsOwner)
+        {
+            // Try to shake camera
+            MOBACamera camera = FindPlayerCamera();
+            if (camera != null)
             {
-                rb.velocity = Vector3.zero;
-                rb.position = safePosition;
+                camera.ShakeCamera(1.0f, 0.7f);
+            }
+            
+            // Show death message
+            if (isDeathEffect)
+            {
+                Debug.Log("<color=red><size=20>YOU DIED!</size></color>");
+            }
+            else
+            {
+                Debug.Log("<color=orange><size=16>You fell off the platform!</size></color>");
             }
         }
         
-        // Asegurar que el jugador no atraviese el suelo haciendo verificaciones adicionales
-        for (int i = 0; i < 5; i++)
+        // Destroy effect after a few seconds
+        if (effect != null)
         {
-            yield return new WaitForFixedUpdate();
-            
-            // Si empezamos a caer muy rápido, intentar corregir
-            Rigidbody rb = GetComponent<Rigidbody>();
-            if (rb != null && rb.velocity.y < -10f)
-            {
-                rb.velocity = new Vector3(rb.velocity.x, 0f, rb.velocity.z);
-                rb.AddForce(Vector3.up * 5f, ForceMode.Impulse);
-                Debug.Log("[RespawnController] Corrigiendo caída rápida post-respawn");
-            }
-        }
-    }
-    
-    // NUEVO: Método para centrar la cámara en el próximo frame
-    private IEnumerator CenterCameraNextFrame()
-    {
-        yield return null; // Esperar un frame
-        
-        // Intentar encontrar la cámara de nuevo si no la tenemos
-        if (playerCamera == null)
-        {
-            MOBACamera[] cameras = FindObjectsOfType<MOBACamera>();
-            foreach (MOBACamera cam in cameras)
-            {
-                if (cam.GetTarget() == transform)
-                {
-                    playerCamera = cam;
-                    break;
-                }
-            }
-        }
-        
-        // Centrar la cámara en el jugador
-        if (playerCamera != null)
-        {
-            // Para llamar al método CenterOnPlayer() en MOBACamera
-            playerCamera.CenterOnPlayer();
-            Debug.Log("[RespawnController] Cámara centrada en el jugador");
-        }
-        else
-        {
-            Debug.LogWarning("[RespawnController] No se pudo centrar la cámara (no encontrada)");
+            Destroy(effect, 3.0f);
         }
     }
     
     [ClientRpc]
     private void StartInvulnerabilityClientRpc()
     {
-        // Iniciar tiempo de invulnerabilidad
+        // Start invulnerability effect
         StartCoroutine(InvulnerabilityRoutine());
     }
     
     private IEnumerator InvulnerabilityRoutine()
     {
-        // Activar estado de invulnerabilidad
+        // Set invulnerable state
         isInvulnerable = true;
         
-        // NUEVO: Asegurarnos que los renderizadores estén activos
-        if (playerRenderers != null)
-        {
-            foreach (var renderer in playerRenderers)
-            {
-                if (renderer != null)
-                {
-                    renderer.enabled = true;
-                }
-            }
-        }
-        
-        // Aplicar material fantasma si existe
+        // Apply ghost material if available
         if (ghostMaterial != null && playerRenderers != null)
         {
             foreach (var renderer in playerRenderers)
             {
                 if (renderer != null)
                 {
-                    // Guardar material original de nuevo, por si acaso
+                    // Save original material if needed
                     int index = System.Array.IndexOf(playerRenderers, renderer);
                     if (index >= 0 && index < originalMaterials.Length)
                     {
                         originalMaterials[index] = renderer.material;
                     }
                     
-                    // Aplicar material fantasma
+                    // Apply ghost material
                     renderer.material = ghostMaterial;
                 }
             }
         }
         
-        // Debug log para verificar estado
-        Debug.Log($"[RespawnController] Iniciando invulnerabilidad. Renderizadores activos: {playerRenderers?.Length ?? 0}");
-        
-        // Esperar el tiempo de invulnerabilidad
+        // Wait for invulnerability duration
         yield return new WaitForSeconds(invulnerabilityTime);
         
-        // Restaurar materiales originales
+        // Restore original materials
         if (originalMaterials != null && playerRenderers != null)
         {
             for (int i = 0; i < playerRenderers.Length; i++)
@@ -774,217 +470,138 @@ public class PlayerRespawnController : NetworkBehaviour
                 if (playerRenderers[i] != null && i < originalMaterials.Length && originalMaterials[i] != null)
                 {
                     playerRenderers[i].material = originalMaterials[i];
-                    
-                    // NUEVO: Asegurar que el renderizador permanezca activado
-                    playerRenderers[i].enabled = true;
                 }
             }
         }
         
-        // Desactivar estado de invulnerabilidad
+        // End invulnerability
         isInvulnerable = false;
         
-        Debug.Log($"[RespawnController] Invulnerabilidad terminada para jugador {OwnerClientId}");
+        Debug.Log($"[RespawnController] Invulnerability ended for player {OwnerClientId}");
     }
     
-    [ClientRpc]
-    private void SpawnDeathEffectClientRpc(Vector3 position, bool isDeathEffect = false)
+    // Find the player's camera
+    private MOBACamera FindPlayerCamera()
     {
-        // Crear un efecto más dramático para muerte vs caída
-        GameObject effect = null;
-        
-        if (isDeathEffect)
+        // Look for cameras targeting this player
+        MOBACamera[] cameras = FindObjectsOfType<MOBACamera>();
+        foreach (var cam in cameras)
         {
-            // Crear explosión de muerte (más dramática)
-            effect = new GameObject("PlayerDeathExplosion");
-            effect.transform.position = position + Vector3.up;
+            if (cam.GetTarget() == transform)
+            {
+                return cam;
+            }
+        }
+        
+        return null;
+    }
+    
+    // Get the appropriate respawn position
+    private Vector3 GetRespawnPosition()
+    {
+        // Default position in case no spawn points are available
+        Vector3 defaultPosition = new Vector3(0, 5, 0);
+        
+        try
+        {
+            // If it's a death respawn (not a fall), use map center
+            if (isDeathRespawn)
+            {
+                return defaultPosition;
+            }
             
-            // Añadir sistema de partículas para muerte
-            ParticleSystem particles = effect.AddComponent<ParticleSystem>();
+            // Get spawn points for team
+            Transform[] spawnPoints = (playerTeam.Value == 1) ? team1SpawnPoints : team2SpawnPoints;
             
-            // Configurar ajustes principales de partículas
-            var main = particles.main;
-            main.startSpeed = 8.0f;
-            main.startSize = 0.8f;
-            main.startLifetime = 2.0f;
-            main.startColor = Color.red;
+            if (spawnPoints == null || spawnPoints.Length == 0)
+            {
+                Debug.LogWarning($"[RespawnController] No spawn points for team {playerTeam.Value}");
+                return defaultPosition;
+            }
             
-            // Configurar forma de emisión
-            var shape = particles.shape;
-            shape.shapeType = ParticleSystemShapeType.Sphere;
-            shape.radius = 1.0f;
+            // Get a random spawn point
+            int index = UnityEngine.Random.Range(0, spawnPoints.Length);
+            Transform spawnPoint = spawnPoints[index];
             
-            // Configurar burst de partículas
-            var emission = particles.emission;
-            emission.rateOverTime = 0;
-            var burst = new ParticleSystem.Burst(0.0f, 100);
-            emission.SetBurst(0, burst);
+            if (spawnPoint == null)
+            {
+                Debug.LogWarning("[RespawnController] Selected spawn point is null");
+                return defaultPosition;
+            }
             
-            // Añadir color a lo largo de la vida para un efecto más dramático
-            var colorOverLifetime = particles.colorOverLifetime;
-            colorOverLifetime.enabled = true;
-            
-            // Crear gradiente de rojo a naranja a transparente
-            Gradient gradient = new Gradient();
-            gradient.SetKeys(
-                new GradientColorKey[] 
-                { 
-                    new GradientColorKey(Color.red, 0.0f),
-                    new GradientColorKey(new Color(1f, 0.6f, 0f), 0.5f),
-                    new GradientColorKey(new Color(0.7f, 0.3f, 0f), 1.0f)
-                },
-                new GradientAlphaKey[] 
-                { 
-                    new GradientAlphaKey(1.0f, 0.0f),
-                    new GradientAlphaKey(0.8f, 0.5f),
-                    new GradientAlphaKey(0.0f, 1.0f)
-                }
+            // Add a small random offset to prevent collisions
+            Vector3 offset = new Vector3(
+                UnityEngine.Random.Range(-0.5f, 0.5f),
+                0.5f,
+                UnityEngine.Random.Range(-0.5f, 0.5f)
             );
-            colorOverLifetime.color = gradient;
             
-            // Añadir luz para efecto dramático
-            Light light = effect.AddComponent<Light>();
-            light.color = Color.red;
-            light.intensity = 5.0f;
-            light.range = 10.0f;
-            
-            // Hacer que la luz parpadee y se desvanezca
-            StartCoroutine(FadeLight(light, 2.0f));
-            
-            // Si somos el propietario, sacudir la cámara
-            if (IsOwner)
-            {
-                // Intentar encontrar la cámara para sacudirla
-                ShakeCameraOnDeath();
-            }
+            return spawnPoint.position + offset;
         }
-        else
+        catch (System.Exception e)
         {
-            // Para efectos que no son muerte (caídas), usar un efecto más simple
-            // Podrías añadir un efecto simple aquí o reutilizar uno existente
-            if (deathEffectPrefab != null)
-            {
-                effect = Instantiate(deathEffectPrefab, position, Quaternion.identity);
-            }
-        }
-        
-        // Destruir el efecto después de un tiempo
-        if (effect != null)
-        {
-            Destroy(effect, 3.0f);
+            Debug.LogError($"[RespawnController] Error finding respawn position: {e.Message}");
+            return defaultPosition;
         }
     }
     
-    // Encontrar la cámara del jugador y sacudirla
-    private void ShakeCameraOnDeath()
-    {
-        // Método 1: Intentar con Main Camera
-        Camera camera = Camera.main;
-        if (camera != null)
-        {
-            MOBACamera mobaCamera = camera.GetComponent<MOBACamera>();
-            if (mobaCamera != null)
-            {
-                mobaCamera.ShakeCamera(1.0f, 1.0f);
-                return;
-            }
-        }
-        
-        // Método 2: Buscar todas las MOBACameras y verificar su objetivo
-        MOBACamera[] allCameras = FindObjectsOfType<MOBACamera>();
-        foreach (MOBACamera mobaCam in allCameras)
-        {
-            if (mobaCam.GetTarget() == transform)
-            {
-                mobaCam.ShakeCamera(1.0f, 1.0f);
-                return;
-            }
-        }
-    }
-    
-    // Efecto de fade de luz
-    private IEnumerator FadeLight(Light light, float duration)
-    {
-        float elapsed = 0f;
-        float startIntensity = light.intensity;
-        float flickerSpeed = 20f;
-        
-        while (elapsed < duration)
-        {
-            // Añadir efecto de parpadeo
-            float flickerFactor = Mathf.PerlinNoise(elapsed * flickerSpeed, 0) * 0.5f + 0.5f;
-            
-            // Calcular factor de desvanecimiento
-            float fadeOutFactor = 1.0f - (elapsed / duration);
-            
-            // Aplicar ambos efectos
-            light.intensity = startIntensity * flickerFactor * fadeOutFactor;
-            
-            elapsed += Time.deltaTime;
-            yield return null;
-        }
-        
-        // Asegurar que la luz está completamente apagada al final
-        light.intensity = 0;
-    }
-    
-    // Reacción a cambios en la variable de red isRespawning
+    // Handle changes to respawning state
     private void OnRespawningChanged(bool oldValue, bool newValue)
     {
         if (newValue)
         {
-            // Entrando en estado de respawn
+            // Entering respawn state
             DisablePlayerControl();
         }
         else
         {
-            // Saliendo del estado de respawn
+            // Exiting respawn state
             EnablePlayerControl();
         }
     }
     
+    // Disable player control during respawn
     private void DisablePlayerControl()
     {
-        // Desactivar controles del jugador y colisiones durante el respawn
-        
-        // Solo enviar notificación de UI al propietario
-        if (IsOwner)
-        {
-            Debug.Log("[RespawnController] ¡Has caído! Reapareciendo...");
-            // Aquí podrías mostrar un mensaje en pantalla o UI
-        }
-        
-        // Desactivar colisiones
+        // Disable collisions
         if (playerCollider != null)
         {
             playerCollider.enabled = false;
         }
         
-        // Desactivar el controlador de habilidades
-        if (abilityController != null)
+        // Disable abilities
+        if (abilityManager != null)
         {
-            abilityController.enabled = false;
+            abilityManager.enabled = false;
         }
         
-        // Desactivar el movimiento del jugador
+        // Disable movement
         if (playerNetwork != null)
         {
             playerNetwork.SetPlayerControlEnabled(false);
         }
+        
+        // Owner-only UI notification
+        if (IsOwner)
+        {
+            Debug.Log("[RespawnController] You died! Respawning...");
+            // Could show UI message here
+        }
     }
     
+    // Enable player control after respawn
     private void EnablePlayerControl()
     {
-        // NUEVO: Forzar visibilidad
+        // Force visibility
         ForceVisibility();
         
-        // Reactivar colisiones explícitamente
+        // Enable collisions
         if (playerCollider != null)
         {
             playerCollider.enabled = true;
         }
         
-        // Asegurar que la física esté correctamente configurada
+        // Reset physics
         Rigidbody rb = GetComponent<Rigidbody>();
         if (rb != null)
         {
@@ -992,49 +609,42 @@ public class PlayerRespawnController : NetworkBehaviour
             rb.useGravity = true;
             rb.velocity = Vector3.zero;
             
-            // Asegurarnos que las constraints estén correctas (solo congelar rotación)
+            // Only freeze rotation
             rb.constraints = RigidbodyConstraints.FreezeRotation;
         }
         
-        // Reactivar el controlador de habilidades
-        if (abilityController != null)
+        // Enable abilities
+        if (abilityManager != null)
         {
-            abilityController.enabled = true;
+            abilityManager.enabled = true;
         }
         
-        // Reactivar el movimiento del jugador
+        // Enable movement
         if (playerNetwork != null)
         {
             playerNetwork.SetPlayerControlEnabled(true);
             
-            // NUEVO: Forzar sincronización de posición con el servidor
+            // Force sync position with server
             if (IsOwner)
             {
                 playerNetwork.UpdatePositionServerRpc(transform.position, transform.rotation);
             }
         }
         
-        // Solo enviar notificación de UI al propietario
+        // Owner-only UI notification
         if (IsOwner)
         {
-            Debug.Log("[RespawnController] ¡Control restaurado! Puedes moverte nuevamente.");
-            // Aquí podrías mostrar un mensaje en pantalla o UI
+            Debug.Log("[RespawnController] Control restored! You can move again.");
+            // Could show UI message here
         }
     }
     
-    // Método público para verificar si el jugador está en estado de invulnerabilidad
-    public bool IsInvulnerable()
-    {
-        return isInvulnerable;
-    }
+    // Public getters
+    public bool IsInvulnerable() => isInvulnerable;
+    public bool IsRespawning() => isRespawning.Value;
+    public int GetFallCount() => fallCount;
     
-    // Método público para verificar si el jugador está en proceso de respawn
-    public bool IsRespawning()
-    {
-        return isRespawning.Value;
-    }
-    
-    // Método para establecer el equipo del jugador (llamado por el Game Manager)
+    // Set team
     public void SetTeam(int team)
     {
         if (IsServer)
@@ -1053,109 +663,9 @@ public class PlayerRespawnController : NetworkBehaviour
         playerTeam.Value = team;
     }
     
-    // Método para obtener el número de caídas del jugador
-    public int GetFallCount()
+    public override void OnDestroy()
     {
-        return fallCount;
-    }
-    
-    // Método modificado para utilizar puntos de spawn válidos
-    private Vector3 GetRespawnPosition()
-    {
-        // Posición del centro del mapa como respaldo
-        Vector3 centerMapPosition = new Vector3(0f, 5f, 0f);
-        
-        try
-        {
-            // Si es un respawn por muerte, usar el centro del mapa
-            if (isDeathRespawn)
-            {
-                Debug.Log($"[RespawnController] Respawn por muerte, usando centro del mapa");
-                return centerMapPosition;
-            }
-            
-            // Punto de spawn predeterminado (si no hay puntos de equipo)
-            Vector3 defaultPosition = centerMapPosition;
-            
-            // Determinar array de spawn points según el equipo
-            Transform[] spawnPoints = null;
-            
-            if (playerTeam.Value == 1 && team1SpawnPoints != null && team1SpawnPoints.Length > 0)
-            {
-                spawnPoints = team1SpawnPoints;
-            }
-            else if (playerTeam.Value == 2 && team2SpawnPoints != null && team2SpawnPoints.Length > 0)
-            {
-                spawnPoints = team2SpawnPoints;
-            }
-            
-            // Si no hay puntos de spawn disponibles, usar posición predeterminada
-            if (spawnPoints == null || spawnPoints.Length == 0)
-            {
-                Debug.LogWarning($"[RespawnController] No hay puntos de spawn disponibles para equipo {playerTeam.Value}");
-                return defaultPosition;
-            }
-            
-            // NUEVO: Lógica mejorada para selección de punto de spawn
-            List<Transform> availablePoints = new List<Transform>();
-            
-            // Primero verificar puntos no ocupados
-            foreach (var point in spawnPoints)
-            {
-                if (point == null) continue;
-                
-                bool isOccupied = false;
-                PlayerNetwork[] players = FindObjectsOfType<PlayerNetwork>();
-                foreach (var player in players)
-                {
-                    // Ignorar a nosotros mismos
-                    if (player.OwnerClientId == OwnerClientId) continue;
-                    
-                    // Verificar distancia
-                    if (Vector3.Distance(player.transform.position, point.position) < 2.0f)
-                    {
-                        isOccupied = true;
-                        break;
-                    }
-                }
-                
-                if (!isOccupied)
-                {
-                    availablePoints.Add(point);
-                }
-            }
-            
-            // Seleccionar punto de spawn
-            Transform spawnPoint;
-            
-            if (availablePoints.Count > 0)
-            {
-                // Usar un punto aleatorio no ocupado
-                int randomIndex = UnityEngine.Random.Range(0, availablePoints.Count);
-                spawnPoint = availablePoints[randomIndex];
-                Debug.Log($"[RespawnController] Usando punto de spawn disponible: {randomIndex}");
-            }
-            else
-            {
-                // Usar un punto basado en el ID si todos están ocupados
-                int spawnIndex = (int)((int)OwnerClientId % spawnPoints.Length);
-                spawnPoint = spawnPoints[spawnIndex];
-                Debug.Log($"[RespawnController] Todos ocupados. Usando punto basado en ID: {spawnIndex}");
-            }
-            
-            // Verificar que el punto exista
-            if (spawnPoint == null)
-            {
-                Debug.LogWarning($"[RespawnController] Punto de spawn seleccionado es nulo (Equipo {playerTeam.Value})");
-                return defaultPosition;
-            }
-            
-            return spawnPoint.position;
-        }
-        catch (System.Exception e)
-        {
-            Debug.LogError($"[RespawnController] Error en GetRespawnPosition: {e.Message}");
-            return centerMapPosition; // Retornar posición segura si hay error
-        }
+        // Unsubscribe from events
+        isRespawning.OnValueChanged -= OnRespawningChanged;
     }
 }
