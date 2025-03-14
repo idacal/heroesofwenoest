@@ -121,13 +121,22 @@ public class MOBAGameManager : NetworkBehaviour
         {
             verificationTimer += Time.deltaTime;
             
-            // Verificar periódicamente
-            if (verificationTimer >= clientVerificationInterval && verificationAttempts < maxVerificationAttempts)
+            // Verificar periódicamente, pero reducir frecuencia después de los primeros intentos
+            float interval = verificationAttempts < 3 ? clientVerificationInterval : clientVerificationInterval * 2;
+            
+            if (verificationTimer >= interval && verificationAttempts < maxVerificationAttempts)
             {
                 verificationTimer = 0f;
                 verificationAttempts++;
                 
                 VerifyAllClientsHaveSpawned();
+                
+                // Después de 5 intentos, reducir a verificaciones ocasionales
+                if (verificationAttempts >= 5)
+                {
+                    Debug.Log("[MOBAGameManager] Cambiando a verificaciones ocasionales");
+                    clientVerificationInterval = 10f; // Verificar cada 10 segundos después de los primeros intentos
+                }
             }
         }
     }
@@ -137,21 +146,28 @@ public class MOBAGameManager : NetworkBehaviour
     {
         Debug.Log($"[MOBAGameManager] Verificando estado de spawn de clientes (intento {verificationAttempts}/{maxVerificationAttempts})");
         
+        // HashSet para rastrear clientIds procesados en esta verificación
+        HashSet<ulong> processedClients = new HashSet<ulong>();
+        
         foreach (var clientId in NetworkManager.Singleton.ConnectedClientsIds)
         {
-            // Saltamos el servidor/host
-            if (clientId == NetworkManager.ServerClientId)
+            // Saltamos el servidor/host y evitamos procesar el mismo cliente dos veces
+            if (clientId == NetworkManager.ServerClientId || processedClients.Contains(clientId))
                 continue;
                 
+            processedClients.Add(clientId);
+            
             // Verificar si este cliente ya tiene un jugador spawneado
             bool playerFound = false;
             bool playerVisibilityOK = false;
+            GameObject playerObject = null;
             
             foreach (var netObj in FindObjectsOfType<NetworkObject>())
             {
                 if (netObj.IsPlayerObject && netObj.OwnerClientId == clientId)
                 {
                     playerFound = true;
+                    playerObject = netObj.gameObject;
                     
                     // Verificar si el jugador tiene renderers activos
                     Renderer[] renderers = netObj.GetComponentsInChildren<Renderer>();
@@ -170,12 +186,18 @@ public class MOBAGameManager : NetworkBehaviour
                         }
                     }
                     
+                    // Solo consideramos la primera instancia de jugador encontrada
+                    // y salimos del loop para evitar procesar duplicados
                     break;
                 }
             }
             
+            // Si no encontramos jugador, forzar emergency spawn
             if (!playerFound)
             {
+                // MODIFICADO: Primero buscar y destruir posibles jugadores fantasma
+                DestroyStalledPlayerObjects(clientId);
+                
                 Debug.LogWarning($"[MOBAGameManager] Cliente {clientId} sin jugador detectado, forzando emergency spawn");
                 
                 // Recordar dónde falla el spawn para posibles problemas persistentes
@@ -212,6 +234,94 @@ public class MOBAGameManager : NetworkBehaviour
                 // Registrar que hemos intentado spawnear a este cliente
                 spawnedClients.Add(clientId);
             }
+            else if (playerObject != null && !playerVisibilityOK)
+            {
+                // El jugador existe pero no es visible
+                Debug.Log($"[MOBAGameManager] Aplicando fixes de visibilidad adicionales para cliente {clientId}");
+                
+                // Intentar activar todos los renderers de forma más agresiva
+                Renderer[] allRenderers = playerObject.GetComponentsInChildren<Renderer>(true);
+                foreach (var renderer in allRenderers)
+                {
+                    if (renderer != null)
+                    {
+                        renderer.enabled = true;
+                        
+                        // Asegurar que el GameObject del renderer esté activo
+                        renderer.gameObject.SetActive(true);
+                        
+                        // Asegurar que el material sea visible
+                        if (renderer.material != null)
+                        {
+                            Color color = renderer.material.color;
+                            color.a = 1.0f;
+                            renderer.material.color = color;
+                        }
+                    }
+                }
+                
+                // Activar todos los GameObjects hijos
+                Transform[] allChildren = playerObject.GetComponentsInChildren<Transform>(true);
+                foreach (var child in allChildren)
+                {
+                    child.gameObject.SetActive(true);
+                }
+            }
+        }
+    }
+    
+    // NUEVO: Método para destruir jugadores fantasma
+    private void DestroyStalledPlayerObjects(ulong clientId)
+    {
+        int destroyedCount = 0;
+        List<GameObject> invalidObjects = new List<GameObject>();
+        
+        // Buscar todos los objetos que podrían estar asociados a este cliente
+        foreach (var netObj in FindObjectsOfType<NetworkObject>())
+        {
+            // Verificar si el objeto pertenece al cliente pero no es un objeto de jugador válido
+            if (netObj.OwnerClientId == clientId)
+            {
+                bool isInvalid = false;
+                
+                // Verificar si tiene componentes clave
+                if (!netObj.IsPlayerObject || netObj.GetComponent<PlayerNetwork>() == null)
+                {
+                    isInvalid = true;
+                }
+                
+                // O si está en estado inconsistente
+                if (!netObj.gameObject.activeInHierarchy)
+                {
+                    isInvalid = true;
+                }
+                
+                if (isInvalid)
+                {
+                    invalidObjects.Add(netObj.gameObject);
+                }
+            }
+        }
+        
+        // Destruir los objetos inválidos
+        foreach (var obj in invalidObjects)
+        {
+            NetworkObject netObj = obj.GetComponent<NetworkObject>();
+            if (netObj != null && netObj.IsSpawned)
+            {
+                netObj.Despawn(true);
+                destroyedCount++;
+            }
+            else
+            {
+                Destroy(obj);
+                destroyedCount++;
+            }
+        }
+        
+        if (destroyedCount > 0)
+        {
+            Debug.Log($"[MOBAGameManager] Se destruyeron {destroyedCount} objetos inválidos para cliente {clientId}");
         }
     }
     
@@ -731,6 +841,12 @@ public class MOBAGameManager : NetworkBehaviour
             }
         }
         
+        // NUEVO: Limpiar el estado existente primero
+        spawnedClients.Clear();
+        playerTeams.Clear();
+        verificationAttempts = 0;
+        verificationTimer = 0f;
+        
         // Limpia cualquier registro de evento anterior para evitar duplicados
         NetworkManager.Singleton.OnClientConnectedCallback -= OnPlayerConnected;
         
@@ -758,23 +874,8 @@ public class MOBAGameManager : NetworkBehaviour
             Debug.Log($"[MOBAGameManager] Cliente ID conectado: {clientId}");
         }
         
-        // Limpiar cualquier instancia de jugador que pudiera haber sido creada
-        foreach (var player in FindObjectsOfType<PlayerNetwork>())
-        {
-            // No eliminar si está en nuestras selecciones de héroe (jugador legítimo)
-            if (playerHeroSelections.ContainsKey(player.OwnerClientId))
-            {
-                Debug.Log($"[MOBAGameManager] Manteniendo instancia legítima de jugador: {player.OwnerClientId}");
-                continue;
-            }
-            
-            // Limpiar instancia inesperada de jugador
-            if (player.NetworkObject != null && player.NetworkObject.IsSpawned)
-            {
-                Debug.Log($"[MOBAGameManager] Limpiando instancia inesperada de jugador: {player.OwnerClientId}");
-                player.NetworkObject.Despawn();
-            }
-        }
+        // NUEVO: Verificar y limpiar instancias existentes de PlayerNetwork
+        CleanupExistingPlayerInstances();
         
         // NUEVO: Crear listas separadas para host y clientes
         ulong hostId = NetworkManager.ServerClientId;
@@ -797,6 +898,46 @@ public class MOBAGameManager : NetworkBehaviour
             SpawnPlayerWithSelectedHero(hostId, 1); // Forzar equipo 1 para host
         }
         
+        // Añadir un pequeño retraso para ayudar con la sincronización
+        StartCoroutine(SpawnClientsWithDelay(clientIds, 0.5f));
+        
+        // Marcar que el juego ha iniciado
+        gameStarted.Value = true;
+        
+        // Avisar a todos los clientes que el juego ha iniciado
+        NotifyGameStartedClientRpc();
+    }
+    
+    // NUEVO: Método para limpiar instancias existentes de jugadores
+    private void CleanupExistingPlayerInstances()
+    {
+        Debug.Log("[MOBAGameManager] Limpiando instancias existentes de jugadores...");
+        
+        int cleanupCount = 0;
+        
+        // Buscar y destruir todos los objetos PlayerNetwork existentes
+        PlayerNetwork[] existingPlayers = FindObjectsOfType<PlayerNetwork>();
+        foreach (var player in existingPlayers)
+        {
+            if (player != null && player.NetworkObject != null && player.NetworkObject.IsSpawned)
+            {
+                Debug.Log($"[MOBAGameManager] Despawning jugador existente: {player.gameObject.name}");
+                player.NetworkObject.Despawn(true);
+                cleanupCount++;
+            }
+        }
+        
+        Debug.Log($"[MOBAGameManager] Se limpiaron {cleanupCount} instancias de jugadores existentes");
+    }
+
+    // NUEVO: Método para spawner clientes con retraso para evitar colisiones
+    private IEnumerator SpawnClientsWithDelay(List<ulong> clientIds, float delay)
+    {
+        // Esperar un momento para que el host se spawne primero
+        yield return new WaitForSeconds(delay);
+        
+        Debug.Log($"[MOBAGameManager] Spawning {clientIds.Count} clientes después de delay");
+        
         // NUEVO: Asignar equipo 2 a todos los clientes
         foreach (var clientId in clientIds)
         {
@@ -808,6 +949,9 @@ public class MOBAGameManager : NetworkBehaviour
                 
                 // Registrar que hemos spawneado a este cliente
                 spawnedClients.Add(clientId);
+                
+                // Pequeño delay entre cada spawn de cliente para evitar colisiones
+                yield return new WaitForSeconds(0.2f);
             }
             else
             {
@@ -819,11 +963,7 @@ public class MOBAGameManager : NetworkBehaviour
         verificationTimer = 0f;
         verificationAttempts = 0;
         
-        // Marcar que el juego ha iniciado
-        gameStarted.Value = true;
-        
-        // Avisar a todos los clientes que el juego ha iniciado
-        NotifyGameStartedClientRpc();
+        Debug.Log("[MOBAGameManager] Todos los clientes spawneados");
     }
     
     // Obtener el prefab correcto para el jugador basado en su selección de héroe
@@ -972,6 +1112,35 @@ public class MOBAGameManager : NetworkBehaviour
             int teamId = (forcedTeamId > 0) ? forcedTeamId : (playerSpawnCount % 2) + 1;
             playerTeams[clientId] = teamId;
             
+            Debug.Log($"[MOBAGameManager] SpawnPlayerWithSelectedHero - ClientID: {clientId}, Equipo: {teamId}, Forzado: {forcedTeamId > 0}");
+            
+            // NUEVO: Verificar y destruir cualquier jugador existente para prevenir duplicados
+            List<GameObject> existingPlayers = new List<GameObject>();
+            foreach (var netObj in FindObjectsOfType<NetworkObject>())
+            {
+                if (netObj.IsPlayerObject && netObj.OwnerClientId == clientId)
+                {
+                    existingPlayers.Add(netObj.gameObject);
+                }
+            }
+            
+            if (existingPlayers.Count > 0)
+            {
+                Debug.LogWarning($"[MOBAGameManager] Se encontraron {existingPlayers.Count} instancias existentes para cliente {clientId}. Limpiando...");
+                foreach (var player in existingPlayers)
+                {
+                    NetworkObject netObj = player.GetComponent<NetworkObject>();
+                    if (netObj != null && netObj.IsSpawned)
+                    {
+                        netObj.Despawn();
+                    }
+                    else
+                    {
+                        Destroy(player);
+                    }
+                }
+            }
+            
             // Select spawn point
             Transform[] spawnPoints = (teamId == 1) ? team1SpawnPoints : team2SpawnPoints;
             if (spawnPoints == null || spawnPoints.Length == 0)
@@ -980,15 +1149,65 @@ public class MOBAGameManager : NetworkBehaviour
                 return;
             }
             
-            // Use modulo to select spawn point (cycle through available points)
-            int spawnIndex = (playerSpawnCount / 2) % spawnPoints.Length;
-            Transform spawnPoint = spawnPoints[spawnIndex];
+            // NUEVO: Lógica mejorada para selección de punto de spawn
+            Transform selectedSpawnPoint = null;
             
-            // Save spawn information
-            Vector3 spawnPosition = spawnPoint.position;
-            Quaternion spawnRotation = spawnPoint.rotation;
+            // Primero, intentar encontrar un punto no ocupado
+            List<Transform> availablePoints = new List<Transform>();
+            foreach (var point in spawnPoints)
+            {
+                if (point == null) continue;
+                
+                bool isOccupied = false;
+                // Verificar si hay algún jugador cercano a este punto
+                foreach (var netObj in FindObjectsOfType<NetworkObject>())
+                {
+                    if (netObj.IsPlayerObject && Vector3.Distance(netObj.transform.position, point.position) < 2.0f)
+                    {
+                        isOccupied = true;
+                        break;
+                    }
+                }
+                
+                if (!isOccupied)
+                {
+                    availablePoints.Add(point);
+                }
+            }
             
-            Debug.Log($"[MOBAGameManager] Spawning player {clientId} as team {teamId} at position {spawnPosition}");
+            // Si hay puntos disponibles, elegir uno aleatorio
+            if (availablePoints.Count > 0)
+            {
+                int randomIndex = UnityEngine.Random.Range(0, availablePoints.Count);
+                selectedSpawnPoint = availablePoints[randomIndex];
+                Debug.Log($"[MOBAGameManager] Seleccionado punto de spawn disponible aleatorio para equipo {teamId}");
+            }
+            // Si no hay disponibles, usar uno basado en ID
+            else if (spawnPoints.Length > 0)
+            {
+                // Use client ID to deterministically select a spawn point
+                int spawnIndex = (int)((int)clientId % spawnPoints.Length);
+                selectedSpawnPoint = spawnPoints[spawnIndex];
+                Debug.Log($"[MOBAGameManager] Todos los puntos ocupados. Usando punto basado en ID: {spawnIndex}");
+            }
+            
+            if (selectedSpawnPoint == null)
+            {
+                Debug.LogError($"[MOBAGameManager] No se pudo encontrar punto de spawn para equipo {teamId}");
+                return;
+            }
+            
+            // Save spawn information with offset to prevent exact overlaps
+            Vector3 offset = new Vector3(
+                UnityEngine.Random.Range(-0.5f, 0.5f), 
+                0.5f, // Siempre un poco por encima del suelo
+                UnityEngine.Random.Range(-0.5f, 0.5f)
+            );
+            
+            Vector3 spawnPosition = selectedSpawnPoint.position + offset;
+            Quaternion spawnRotation = selectedSpawnPoint.rotation;
+            
+            Debug.Log($"[MOBAGameManager] Spawning player {clientId} as team {teamId} at position {spawnPosition} (from spawn point: {selectedSpawnPoint.name})");
             
             // Get the hero prefab based on player's selection
             GameObject heroPrefab = GetHeroPrefabForPlayer(clientId);
@@ -1057,6 +1276,16 @@ public class MOBAGameManager : NetworkBehaviour
             foreach (var renderer in renderers)
             {
                 renderer.enabled = true;
+                
+                // Asegurar que el objeto contenedor también está activo
+                renderer.gameObject.SetActive(true);
+            }
+            
+            // NUEVO: Activar todos los GameObjects en la jerarquía
+            Transform[] allChildren = playerInstance.GetComponentsInChildren<Transform>(true);
+            foreach (var child in allChildren)
+            {
+                child.gameObject.SetActive(true);
             }
             
             // Spawn the object in the network
@@ -1178,17 +1407,87 @@ public class MOBAGameManager : NetworkBehaviour
     // NUEVO: Método para forzar ocultar UI de selección de héroe
     private IEnumerator ForceHideHeroSelectionUI()
     {
+        Debug.Log("[MOBAGameManager] Iniciando ocultación agresiva del UI de selección de héroe");
+        
+        // Buscar todas las instancias posibles
+        HeroSelectionUI[] allUIs = FindObjectsOfType<HeroSelectionUI>(true);
+        Debug.Log($"[MOBAGameManager] Encontradas {allUIs.Length} instancias de HeroSelectionUI");
+        
         // Intentar varias veces con pequeños delays
         for (int i = 0; i < 5; i++)
         {
-            HeroSelectionUI selectionUI = FindObjectOfType<HeroSelectionUI>();
-            if (selectionUI != null)
+            // Intento con el método normal
+            foreach (var selectionUI in allUIs)
             {
-                selectionUI.Hide();
-                Debug.Log("[MOBAGameManager] UI de selección de héroe ocultada explícitamente");
+                if (selectionUI != null)
+                {
+                    selectionUI.Hide();
+                    Debug.Log($"[MOBAGameManager] UI de selección de héroe ocultada (intento {i+1})");
+                }
             }
             
-            yield return new WaitForSeconds(0.5f);
+            yield return new WaitForSeconds(0.3f);
+            
+            // Intento más agresivo - desactivar directamente
+            if (i >= 2)
+            {
+                HeroSelectionUI[] remainingUIs = FindObjectsOfType<HeroSelectionUI>(true);
+                foreach (var ui in remainingUIs)
+                {
+                    if (ui != null && ui.gameObject.activeInHierarchy)
+                    {
+                        Debug.Log($"[MOBAGameManager] Desactivando GameObject de UI directamente (intento {i+1})");
+                        ui.gameObject.SetActive(false);
+                        
+                        // Desactivar también Canvas parent
+                        Canvas parentCanvas = ui.GetComponentInParent<Canvas>();
+                        if (parentCanvas != null)
+                        {
+                            parentCanvas.enabled = false;
+                            parentCanvas.gameObject.SetActive(false);
+                        }
+                    }
+                }
+            }
+            
+            // Intento extremo - destruir los objetos
+            if (i == 4)
+            {
+                // Último recurso - destruir todos los Canvas con HeroSelectionUI
+                Canvas[] allCanvases = FindObjectsOfType<Canvas>();
+                foreach (var canvas in allCanvases)
+                {
+                    if (canvas.GetComponentInChildren<HeroSelectionUI>(true) != null)
+                    {
+                        Debug.Log("[MOBAGameManager] DESTRUYENDO Canvas con HeroSelectionUI");
+                        Destroy(canvas.gameObject);
+                    }
+                }
+            }
+            
+            yield return new WaitForSeconds(0.2f);
+        }
+        
+        // Verificación final
+        yield return new WaitForSeconds(1.0f);
+        HeroSelectionUI[] finalCheck = FindObjectsOfType<HeroSelectionUI>(true);
+        if (finalCheck.Length > 0)
+        {
+            Debug.LogWarning($"[MOBAGameManager] Todavía existen {finalCheck.Length} UIs después de intentos de ocultación");
+            
+            // Destruir todo como último recurso
+            foreach (var ui in finalCheck)
+            {
+                if (ui != null)
+                {
+                    Debug.Log("[MOBAGameManager] Destruyendo HeroSelectionUI persistente");
+                    Destroy(ui.gameObject);
+                }
+            }
+        }
+        else
+        {
+            Debug.Log("[MOBAGameManager] UI de selección de héroe eliminada exitosamente");
         }
     }
     
