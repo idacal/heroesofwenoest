@@ -2,7 +2,7 @@ using Unity.Netcode;
 using UnityEngine;
 using System.Collections.Generic;
 using PlayerAbilities;
-
+using System;
 // Base class for all heroes
 public class Hero : NetworkBehaviour
 {
@@ -152,7 +152,6 @@ public virtual void InitializeHeroAbilities()
 {
     Debug.Log($"[Hero] Initializing abilities for {heroName}");
     
-    // Get the ability manager - ACTUALIZADO para usar PlayerAbilityManager
     if (abilityManager == null)
     {
         abilityManager = GetComponent<PlayerAbilityManager>();
@@ -160,17 +159,66 @@ public virtual void InitializeHeroAbilities()
     
     if (abilityManager == null)
     {
-        Debug.LogError("[Hero] No PlayerAbilityManager found! Abilities can't be initialized.");
+        Debug.LogError("[Hero] No PlayerAbilityManager found!");
         return;
     }
     
-    // Clear any existing abilities first
+    // Clear existing abilities
     abilityManager.RemoveAllAbilities();
     
-    // In the base class, we don't add specific abilities
-    // Derived hero classes will override this method to add their specific abilities
+    // Find the HeroDefinition for this hero
+    HeroDefinition myDefinition = null;
+    HeroDefinition[] allDefinitions = Resources.FindObjectsOfTypeAll<HeroDefinition>();
+    foreach (var def in allDefinitions)
+    {
+        if (def.heroName == heroName)
+        {
+            myDefinition = def;
+            break;
+        }
+    }
     
-    Debug.Log($"[Hero] Base initialization complete for {heroName}. Abilities will be added in derived classes.");
+    // Initialize from Hero Definition if found
+    if (myDefinition != null && myDefinition.abilities.Count > 0)
+    {
+        Debug.Log($"[Hero] Using abilities from HeroDefinition for {heroName}");
+        
+        // Add each ability from the definition
+        for (int i = 0; i < myDefinition.abilities.Count; i++)
+        {
+            var abilityDef = myDefinition.abilities[i];
+            if (string.IsNullOrEmpty(abilityDef.abilityType))
+                continue;
+                
+            try
+            {
+                Type abilityType = Type.GetType(abilityDef.abilityType);
+                if (abilityType != null && typeof(BaseAbility).IsAssignableFrom(abilityType))
+                {
+                    // Use reflection to call AddAbility with the correct generic type
+                    var methodInfo = typeof(PlayerAbilityManager).GetMethod("AddAbility");
+                    var genericMethod = methodInfo.MakeGenericMethod(abilityType);
+                    
+                    // Call the method with the slot parameter (use i as the slot index)
+                    BaseAbility ability = (BaseAbility)genericMethod.Invoke(abilityManager, new object[] { i });
+                    
+                    Debug.Log($"[Hero] Added ability: {abilityDef.abilityName} to slot {i}");
+                }
+                else
+                {
+                    Debug.LogError($"[Hero] Invalid ability type: {abilityDef.abilityType}");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[Hero] Error adding ability {abilityDef.abilityName}: {e.Message}");
+            }
+        }
+    }
+    else
+    {
+        Debug.Log($"[Hero] No HeroDefinition found for {heroName} or no abilities defined");
+    }
 }
     
     // This method can be called when the hero's abilities should be activated based on game state
