@@ -1,436 +1,312 @@
+using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using Unity.Netcode;
 using PlayerAbilities;
 
 public class AbilityUIManager : MonoBehaviour
 {
+    [Header("Referencia de UI")]
+    [SerializeField] private RectTransform abilityContainer;
+    [SerializeField] private GameObject abilitySlotPrefab;
+    [SerializeField] private int maxAbilitySlots = 6;
+
+    [Header("Configuración de Ranuras")]
+    [SerializeField] private Color readyColor = Color.white;
+    [SerializeField] private Color cooldownColor = new Color(0.5f, 0.5f, 0.5f, 0.7f);
+    [SerializeField] private bool showAbilityTooltips = true;
+    [SerializeField] private bool showCooldownText = true;
+
+    // Referencias a componentes del jugador
+    private PlayerNetwork playerNetwork;
+    private PlayerAbilityManager abilityManager;
+
+    // Referencias a slots de habilidad en la UI
+    private List<AbilitySlot> abilitySlots = new List<AbilitySlot>();
+
+    // Clase para gestionar un slot de habilidad
     [System.Serializable]
-    public class AbilityUI
+    private class AbilitySlot
     {
-        public Image abilityImage;
-        public Image cooldownOverlay; // Opcional, puedes dejarlo sin asignar
-        public TextMeshProUGUI keyText;
+        public GameObject slotObject;
+        public Image abilityIcon;
+        public Image cooldownOverlay;
         public TextMeshProUGUI cooldownText;
-        public Image requirementIcon; // Ícono para mostrar requisitos (como movimiento)
+        public TextMeshProUGUI keyBindText;
+        public BaseAbility linkedAbility;
+        public int slotIndex;
     }
 
-    [Header("Referencias")]
-    [SerializeField] private PlayerAbilityManager playerAbilityManager;
-    [SerializeField] private PlayerAbility playerAbility; // Para compatibilidad
+    private void Awake()
+    {
+        // Verificar si tenemos el container de habilidades
+        if (abilityContainer == null)
+        {
+            Debug.LogError("[AbilityUIManager] abilityContainer no está asignado!");
+            enabled = false;
+            return;
+        }
 
-    [Header("UI de Habilidades")]
-    [SerializeField] private AbilityUI[] abilityUIs = new AbilityUI[4]; // Q, W, E, R
+        // Verificar que tengamos el prefab
+        if (abilitySlotPrefab == null)
+        {
+            Debug.LogError("[AbilityUIManager] abilitySlotPrefab no está asignado!");
+            enabled = false;
+            return;
+        }
 
-    [Header("Configuración")]
-    [SerializeField] private Color normalColor = Color.white;
-    [SerializeField] private Color cooldownColor = new Color(0.5f, 0.5f, 0.5f, 0.7f);
-    [SerializeField] private Color noManaColor = new Color(0.3f, 0.3f, 0.8f, 0.7f);
-    [SerializeField] private Color requirementNotMetColor = new Color(0.8f, 0.4f, 0.0f, 0.7f);
-    
-    [Header("Debug")]
-    [SerializeField] private bool showDebugLogs = false;
-
-    // Referencia al PlayerStats para verificar mana
-    private PlayerStats playerStats;
-    
-    // Referencias a habilidades específicas para requisitos adicionales
-    private EarthquakeAbility earthquakeAbility; // Obsoleto, mantener para compatibilidad
-    private StrongJumpAbility strongJumpAbility; // Nueva habilidad que reemplaza Earthquake
+        // Limpiar cualquier slot existente en el editor
+        foreach (Transform child in abilityContainer)
+        {
+            Destroy(child.gameObject);
+        }
+        abilitySlots.Clear();
+    }
 
     private void Start()
     {
-        // Inicializar teclas
-        string[] keys = { "Q", "W", "E", "R" };
-        for (int i = 0; i < abilityUIs.Length; i++)
-        {
-            if (abilityUIs[i].keyText != null)
-            {
-                abilityUIs[i].keyText.text = keys[i];
-            }
-            
-            // Asegurarse de que los textos de cooldown estén desactivados inicialmente
-            if (abilityUIs[i].cooldownText != null)
-            {
-                abilityUIs[i].cooldownText.gameObject.SetActive(false);
-            }
-            
-            // Ocultar íconos de requisitos inicialmente
-            if (abilityUIs[i].requirementIcon != null)
-            {
-                abilityUIs[i].requirementIcon.gameObject.SetActive(false);
-            }
-        }
-        
-        // Encontrar referencias a los componentes del jugador
-        FindPlayerComponents();
+        // Iniciar la búsqueda de componentes del jugador
+        StartCoroutine(FindPlayerComponents());
+
+        // Crear slots vacíos para habilidades
+        CreateAbilitySlots();
     }
 
-    private void FindPlayerComponents()
+    private IEnumerator FindPlayerComponents()
     {
-        // Primero buscar el PlayerAbilityManager (sistema nuevo)
-        if (playerAbilityManager == null)
+        int maxRetries = 15;
+        int retryCount = 0;
+        
+        while (retryCount < maxRetries)
         {
-            PlayerNetwork[] players = FindObjectsOfType<PlayerNetwork>();
-            foreach (PlayerNetwork player in players)
+            // Buscar en todos los jugadores existentes
+            PlayerNetwork[] allPlayers = FindObjectsOfType<PlayerNetwork>();
+            foreach (var player in allPlayers)
             {
                 if (player.IsLocalPlayer)
                 {
-                    playerAbilityManager = player.GetComponent<PlayerAbilityManager>();
+                    Debug.Log($"[AbilityUIManager] Encontrado jugador local: {player.name}");
                     
-                    // Para compatibilidad, también buscar PlayerAbility
-                    if (playerAbility == null)
+                    // Intenta obtener los componentes necesarios
+                    playerNetwork = player;
+                    abilityManager = player.GetComponent<PlayerAbilityManager>();
+                    
+                    if (abilityManager != null)
                     {
-                        playerAbility = player.GetComponent<PlayerAbility>();
-                    }
-                    
-                    playerStats = player.GetComponent<PlayerStats>();
-                    
-                    // Buscar referencia a EarthquakeAbility (compatibilidad)
-                    earthquakeAbility = player.GetComponent<EarthquakeAbility>();
-                    
-                    // Buscar referencia a StrongJumpAbility (nuevo sistema)
-                    strongJumpAbility = player.GetComponent<StrongJumpAbility>();
-                    
-                    if ((playerAbilityManager != null || playerAbility != null) && playerStats != null)
-                    {
-                        Debug.Log("[AbilityUIManager] Se encontraron componentes del jugador local");
-                        break;
+                        Debug.Log("[AbilityUIManager] Componentes encontrados con éxito");
+                        SetupAbilityUI();
+                        yield break;  // Corregido: antes era return; debe ser yield break;
                     }
                 }
             }
             
-            if (playerAbilityManager == null && playerAbility == null)
+            // Si no se encontraron, esperar un tiempo y reintentar
+            retryCount++;
+            float waitTime = 1.0f;
+            Debug.LogWarning($"[AbilityUIManager] No se pudieron encontrar los componentes del jugador, reintentando en {waitTime} segundo(s)... (intento {retryCount}/{maxRetries})");
+            yield return new WaitForSeconds(waitTime);
+        }
+        
+        Debug.LogError("[AbilityUIManager] No se pudieron encontrar los componentes del jugador después de múltiples reintentos");
+    }
+
+    private void CreateAbilitySlots()
+    {
+        // Crear los slots de habilidad vacíos
+        for (int i = 0; i < maxAbilitySlots; i++)
+        {
+            GameObject slotObject = Instantiate(abilitySlotPrefab, abilityContainer);
+            slotObject.name = $"AbilitySlot_{i}";
+
+            // Crear una nueva instancia de AbilitySlot
+            AbilitySlot newSlot = new AbilitySlot
             {
-                Debug.LogWarning("[AbilityUIManager] No se pudieron encontrar los componentes del jugador, reintentando en 1 segundo...");
-                Invoke("FindPlayerComponents", 1f);
+                slotObject = slotObject,
+                slotIndex = i
+            };
+
+            // Obtener referencias a componentes del slot
+            newSlot.abilityIcon = slotObject.transform.Find("AbilityIcon")?.GetComponent<Image>();
+            newSlot.cooldownOverlay = slotObject.transform.Find("CooldownOverlay")?.GetComponent<Image>();
+            newSlot.cooldownText = slotObject.transform.Find("CooldownText")?.GetComponent<TextMeshProUGUI>();
+            newSlot.keyBindText = slotObject.transform.Find("KeyBindText")?.GetComponent<TextMeshProUGUI>();
+
+            // Configurar estado inicial
+            if (newSlot.abilityIcon != null)
+            {
+                // Inicialmente sin icono
+                newSlot.abilityIcon.enabled = false;
             }
+
+            if (newSlot.cooldownOverlay != null)
+            {
+                // Inicialmente sin cooldown
+                newSlot.cooldownOverlay.fillAmount = 0f;
+                newSlot.cooldownOverlay.enabled = false;
+            }
+
+            if (newSlot.cooldownText != null)
+            {
+                newSlot.cooldownText.text = "";
+                newSlot.cooldownText.enabled = false;
+            }
+
+            if (newSlot.keyBindText != null)
+            {
+                // Tecla por defecto
+                newSlot.keyBindText.text = $"{i+1}";
+            }
+
+            // Agregar a la lista
+            abilitySlots.Add(newSlot);
+        }
+    }
+
+    private void SetupAbilityUI()
+    {
+        if (abilityManager == null)
+        {
+            Debug.LogError("[AbilityUIManager] No se puede configurar UI sin PlayerAbilityManager");
+            return;
+        }
+
+        // Actualizar los slots con las habilidades actuales
+        UpdateAbilitySlots();
+    }
+
+    private void UpdateAbilitySlots()
+    {
+        // Limpiar slots
+        for (int i = 0; i < abilitySlots.Count; i++)
+        {
+            AbilitySlot slot = abilitySlots[i];
+            BaseAbility ability = abilityManager.GetAbilityBySlot(i);
+
+            // Actualizar el slot con la habilidad (o null si no hay habilidad)
+            UpdateSlotWithAbility(slot, ability);
+        }
+    }
+
+    private void UpdateSlotWithAbility(AbilitySlot slot, BaseAbility ability)
+    {
+        slot.linkedAbility = ability;
+
+        if (ability == null)
+        {
+            // No hay habilidad, desactivar elementos visuales
+            if (slot.abilityIcon != null)
+                slot.abilityIcon.enabled = false;
+
+            if (slot.cooldownOverlay != null)
+                slot.cooldownOverlay.enabled = false;
+
+            if (slot.cooldownText != null)
+                slot.cooldownText.enabled = false;
+
+            if (slot.keyBindText != null)
+                slot.keyBindText.enabled = false;
+
+            return;
+        }
+
+        // Hay una habilidad, configurar visuales
+        if (slot.abilityIcon != null)
+        {
+            slot.abilityIcon.enabled = true;
+            slot.abilityIcon.sprite = ability.icon;
+        }
+
+        if (slot.keyBindText != null)
+        {
+            slot.keyBindText.enabled = true;
+            slot.keyBindText.text = ability.activationKey.ToString();
+        }
+
+        // Resetear cooldown
+        if (slot.cooldownOverlay != null)
+        {
+            slot.cooldownOverlay.fillAmount = 0f;
+            slot.cooldownOverlay.enabled = false;
+        }
+
+        if (slot.cooldownText != null)
+        {
+            slot.cooldownText.text = "";
+            slot.cooldownText.enabled = false;
         }
     }
 
     private void Update()
     {
-        // Actualizar UI basado en el sistema disponible
-        if (playerAbilityManager != null)
+        // Actualizar estado de cooldown para cada slot
+        for (int i = 0; i < abilitySlots.Count; i++)
         {
-            // Usar el nuevo sistema
-            UpdateUIFromAbilityManager();
-        }
-        else if (playerAbility != null)
-        {
-            // Usar el sistema antiguo
-            UpdateUIFromPlayerAbility();
-        }
-        else
-        {
-            // Intentar encontrar componentes de nuevo
-            FindPlayerComponents();
-        }
-    }
-    
-    // Método para actualizar UI desde PlayerAbilityManager (nuevo sistema)
-    private void UpdateUIFromAbilityManager()
-    {
-        // Actualizar UI de cada slot
-        for (int i = 0; i < abilityUIs.Length; i++)
-        {
-            BaseAbility ability = playerAbilityManager.GetAbilityBySlot(i);
-            if (ability != null)
-            {
-                UpdateAbilityUIFromBaseAbility(i, ability);
-            }
-        }
-    }
-    
-    // Método para actualizar UI desde PlayerAbility (sistema antiguo)
-    private void UpdateUIFromPlayerAbility()
-    {
-        if (playerStats == null || playerAbility == null) return;
-        
-        // Actualizar UI de cada habilidad
-        int count = Mathf.Min(abilityUIs.Length, playerAbility.GetAbilityCount());
-        for (int i = 0; i < count; i++)
-        {
-            UpdateAbilityUI(i);
-        }
-    }
-    
-    // Nuevo método que actualiza UI basado directamente en una instancia de BaseAbility
-    private void UpdateAbilityUIFromBaseAbility(int index, BaseAbility ability)
-    {
-        if (index < 0 || index >= abilityUIs.Length) return;
-        
-        AbilityUI ui = abilityUIs[index];
-        if (ui == null) return;
-        
-        // Verificar si la habilidad está en cooldown
-        bool isInCooldown = !ability.isReady;
-        float cooldownRemaining = ability.GetRemainingCooldown();
-        bool hasMana = playerStats.CurrentMana >= ability.manaCost;
-        
-        // Verificar requisitos adicionales específicos para cada habilidad
-        bool requirementsMet = CheckRequirements(ability);
-        string requirementMessage = GetRequirementMessage(ability);
-        
-        // Debug logging
-        if (showDebugLogs && Time.frameCount % 60 == 0)
-        {
-            Debug.Log($"[AbilityUIManager] Habilidad {index} ({ability.abilityName}) - " +
-                     $"En cooldown: {isInCooldown}, " +
-                     $"Tiempo restante: {cooldownRemaining:F1}s, " +
-                     $"Tiene maná: {hasMana}, " +
-                     $"Requisitos cumplidos: {requirementsMet}");
-        }
-        
-        // Actualizar texto de cooldown
-        if (ui.cooldownText != null)
-        {
-            if (isInCooldown)
-            {
-                // Activar y actualizar el texto
-                ui.cooldownText.gameObject.SetActive(true);
-                ui.cooldownText.text = Mathf.CeilToInt(cooldownRemaining).ToString();
-            }
-            else
-            {
-                // Habilidad lista, ocultar texto de cooldown
-                ui.cooldownText.gameObject.SetActive(false);
-            }
-        }
-        
-        // Mostrar ícono de requisito si no se cumplen los requisitos
-        if (ui.requirementIcon != null)
-        {
-            if (!requirementsMet)
-            {
-                ui.requirementIcon.gameObject.SetActive(true);
-                
-                // Si hay un texto en el ícono, actualizarlo
-                TextMeshProUGUI iconText = ui.requirementIcon.GetComponentInChildren<TextMeshProUGUI>();
-                if (iconText != null)
-                {
-                    iconText.text = requirementMessage;
-                }
-            }
-            else
-            {
-                ui.requirementIcon.gameObject.SetActive(false);
-            }
-        }
-        
-        // Actualizar overlay de cooldown (opcional)
-        if (ui.cooldownOverlay != null)
-        {
-            if (isInCooldown)
-            {
-                // Mostrar el fill del cooldown (de 1 a 0 durante el cooldown)
-                float fillAmount = cooldownRemaining / ability.cooldown;
-                ui.cooldownOverlay.fillAmount = fillAmount;
-                ui.cooldownOverlay.color = cooldownColor;
-            }
-            else if (!hasMana)
-            {
-                // Sin mana suficiente
-                ui.cooldownOverlay.fillAmount = 1f;
-                ui.cooldownOverlay.color = noManaColor;
-            }
-            else if (!requirementsMet)
-            {
-                // Requisitos no cumplidos
-                ui.cooldownOverlay.fillAmount = 1f;
-                ui.cooldownOverlay.color = requirementNotMetColor;
-            }
-            else
-            {
-                // Habilidad lista
-                ui.cooldownOverlay.fillAmount = 0f;
-            }
-        }
-        
-        // Actualizar imagen principal
-        if (ui.abilityImage != null)
-        {
-            // Asignar icono si no está configurado
-            if (ui.abilityImage.sprite == null && ability.icon != null)
-            {
-                ui.abilityImage.sprite = ability.icon;
-            }
+            AbilitySlot slot = abilitySlots[i];
             
-            if (isInCooldown || !hasMana || !requirementsMet)
+            if (slot.linkedAbility != null)
             {
-                ui.abilityImage.color = new Color(1f, 1f, 1f, 0.5f); // Semi-transparente
-            }
-            else
-            {
-                ui.abilityImage.color = normalColor;
+                UpdateSlotCooldown(slot);
             }
         }
     }
 
-    // Método original para soporte de sistema antiguo
-    private void UpdateAbilityUI(int index)
+    private void UpdateSlotCooldown(AbilitySlot slot)
     {
-        if (index < 0 || index >= abilityUIs.Length) return;
-        
-        AbilityUI ui = abilityUIs[index];
-        PlayerAbility.Ability ability = playerAbility.GetAbility(index);
-        
-        if (ability == null) return;
-        
-        // Verificar si la habilidad está en cooldown
-        bool isInCooldown = !ability.isReady;
-        float cooldownRemaining = playerAbility.GetRemainingCooldown(index);
-        bool hasMana = playerStats.CurrentMana >= ability.manaCost;
-        
-        // Verificar requisitos adicionales (solo para el sistema antiguo)
-        bool requirementsMet = true;
-        string requirementMessage = "";
-        
-        // Si es EarthquakeAbility (índice 1 = W)
-        if (index == 1 && earthquakeAbility != null)
+        if (slot.linkedAbility == null) return;
+
+        // Verificar estado de cooldown
+        float remainingCooldown = slot.linkedAbility.GetRemainingCooldown();
+        bool isInCooldown = remainingCooldown > 0f;
+
+        // Actualizar overlay de cooldown
+        if (slot.cooldownOverlay != null)
         {
-            requirementsMet = earthquakeAbility.IsMovingFastEnough();
+            slot.cooldownOverlay.enabled = isInCooldown;
             
-            if (!requirementsMet)
+            if (isInCooldown)
             {
-                requirementMessage = "¡Muévete!";
+                float cooldownDuration = slot.linkedAbility.cooldown;
+                float cooldownRatio = remainingCooldown / cooldownDuration;
+                
+                // El fillAmount va de 1 a 0 para representar el progreso del cooldown
+                slot.cooldownOverlay.fillAmount = cooldownRatio;
+            }
+            else
+            {
+                slot.cooldownOverlay.fillAmount = 0f;
             }
         }
-        // Si es StrongJumpAbility (new W ability)
-        else if (index == 1 && strongJumpAbility != null)
-        {
-            requirementsMet = strongJumpAbility.IsMovingFastEnough();
-            
-            if (!requirementsMet)
-            {
-                requirementMessage = "¡Muévete!";
-            }
-        }
-        
-        // Debug logging
-        if (showDebugLogs && Time.frameCount % 60 == 0)
-        {
-            Debug.Log($"[AbilityUIManager] Habilidad {index} ({ability.name}) - " +
-                     $"En cooldown: {isInCooldown}, " +
-                     $"Tiempo restante: {cooldownRemaining:F1}s, " +
-                     $"Tiene maná: {hasMana}, " +
-                     $"Requisitos cumplidos: {requirementsMet}");
-        }
-        
+
         // Actualizar texto de cooldown
-        if (ui.cooldownText != null)
+        if (slot.cooldownText != null && showCooldownText)
         {
+            slot.cooldownText.enabled = isInCooldown;
+            
             if (isInCooldown)
             {
-                // Activar y actualizar el texto
-                ui.cooldownText.gameObject.SetActive(true);
-                ui.cooldownText.text = Mathf.CeilToInt(cooldownRemaining).ToString();
-                
-                if (showDebugLogs && index == 0 && Time.frameCount % 60 == 0)
-                {
-                    Debug.Log($"[AbilityUIManager] Mostrando cooldown de Dash: {ui.cooldownText.text}s");
-                }
+                slot.cooldownText.text = remainingCooldown.ToString("F1");
             }
             else
             {
-                // Habilidad lista, ocultar texto de cooldown
-                ui.cooldownText.gameObject.SetActive(false);
+                slot.cooldownText.text = "";
             }
         }
-        
-        // Mostrar ícono de requisito si no se cumplen los requisitos
-        if (ui.requirementIcon != null)
+
+        // Actualizar color del icono
+        if (slot.abilityIcon != null)
         {
-            if (!requirementsMet)
-            {
-                ui.requirementIcon.gameObject.SetActive(true);
-                
-                // Si hay un texto en el ícono, actualizarlo
-                TextMeshProUGUI iconText = ui.requirementIcon.GetComponentInChildren<TextMeshProUGUI>();
-                if (iconText != null)
-                {
-                    iconText.text = requirementMessage;
-                }
-            }
-            else
-            {
-                ui.requirementIcon.gameObject.SetActive(false);
-            }
-        }
-        
-        // Actualizar overlay de cooldown (opcional)
-        if (ui.cooldownOverlay != null)
-        {
-            if (isInCooldown)
-            {
-                // Mostrar el fill del cooldown (de 1 a 0 durante el cooldown)
-                float fillAmount = cooldownRemaining / ability.cooldown;
-                ui.cooldownOverlay.fillAmount = fillAmount;
-                ui.cooldownOverlay.color = cooldownColor;
-            }
-            else if (!hasMana)
-            {
-                // Sin mana suficiente
-                ui.cooldownOverlay.fillAmount = 1f;
-                ui.cooldownOverlay.color = noManaColor;
-            }
-            else if (!requirementsMet)
-            {
-                // Requisitos no cumplidos
-                ui.cooldownOverlay.fillAmount = 1f;
-                ui.cooldownOverlay.color = requirementNotMetColor;
-            }
-            else
-            {
-                // Habilidad lista
-                ui.cooldownOverlay.fillAmount = 0f;
-            }
-        }
-        
-        // Actualizar imagen principal
-        if (ui.abilityImage != null)
-        {
-            if (isInCooldown || !hasMana || !requirementsMet)
-            {
-                ui.abilityImage.color = new Color(1f, 1f, 1f, 0.5f); // Semi-transparente
-            }
-            else
-            {
-                ui.abilityImage.color = normalColor;
-            }
+            slot.abilityIcon.color = isInCooldown ? cooldownColor : readyColor;
         }
     }
-    
-    // Métodos auxiliares para verificar requisitos específicos de cada habilidad
-    private bool CheckRequirements(BaseAbility ability)
+
+    // Método público para forzar actualización de UI (puede ser llamado desde Player)
+    public void RefreshAbilityUI()
     {
-        // Si es StrongJumpAbility, verificar movimiento
-        if (ability is StrongJumpAbility)
+        if (abilityManager != null)
         {
-            StrongJumpAbility jumpAbility = ability as StrongJumpAbility;
-            return jumpAbility.IsMovingFastEnough();
+            UpdateAbilitySlots();
         }
-        
-        // Si es EarthquakeAbility (compatibilidad)
-        if (ability is EarthquakeAbility)
-        {
-            EarthquakeAbility earthquakeAbility = ability as EarthquakeAbility;
-            return earthquakeAbility.IsMovingFastEnough();
-        }
-        
-        // Por defecto, todos los requisitos se cumplen
-        return true;
-    }
-    
-    private string GetRequirementMessage(BaseAbility ability)
-    {
-        // Si es StrongJumpAbility o EarthquakeAbility y requiere movimiento
-        if ((ability is StrongJumpAbility || ability is EarthquakeAbility) && !CheckRequirements(ability))
-        {
-            return "¡Muévete!";
-        }
-        
-        // Mensaje predeterminado
-        return "";
     }
 }

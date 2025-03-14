@@ -493,25 +493,34 @@ public class PlayerStats : NetworkBehaviour
     // NUEVOS MÉTODOS PARA CONFIGURACIÓN DE HÉROES
     
     // Método para establecer la salud máxima (llamado durante la inicialización del héroe)
-    public void SetMaxHealth(float value)
+// Método para establecer la salud máxima (llamado durante la inicialización del héroe)
+public void SetMaxHealth(float value)
+{
+    if (!IsServer) 
     {
-        if (!IsServer) 
+        if (IsSpawned) // Solo enviar RPC si ya está spawneado
         {
             SetMaxHealthServerRpc(value);
-            return;
         }
-        
-        maxHealth = value;
-        
-        // Si la salud actual es mayor que el nuevo máximo, ajustarla
-        if (networkHealth.Value > maxHealth)
+        else
         {
-            networkHealth.Value = maxHealth;
+            Debug.LogWarning("[$PlayerStats] No se puede enviar SetMaxHealthServerRpc, objeto aún no spawneado");
         }
-        
-        // Notificar a los clientes sobre el cambio
-        OnHealthChanged?.Invoke(networkHealth.Value, maxHealth);
+        return;
     }
+    
+    // Código para el servidor
+    maxHealth = value;
+    
+    // Si la salud actual es mayor que el nuevo máximo, ajustarla
+    if (networkHealth.Value > maxHealth)
+    {
+        networkHealth.Value = maxHealth;
+    }
+    
+    // Notificar a los clientes sobre el cambio
+    OnHealthChanged?.Invoke(networkHealth.Value, maxHealth);
+}
 
     // Método para establecer el maná máximo (llamado durante la inicialización del héroe)
     public void SetMaxMana(float value)
@@ -582,4 +591,33 @@ public class PlayerStats : NetworkBehaviour
     {
         SetManaRegen(value);
     }
+    // Método para inicializar directamente sin usar RPC (evita la excepción)
+public void InitializeStatsDirectly(float newMaxHealth, float newMaxMana, float newHealthRegen, float newManaRegen)
+{
+    if (!IsServer) {
+        Debug.LogWarning("[PlayerStats] InitializeStatsDirectly debe ser llamado solo desde el servidor");
+        return;
+    }
+    
+    try {
+        // Configurar valores directamente
+        maxHealth = newMaxHealth;
+        maxMana = newMaxMana;
+        healthRegen = newHealthRegen;
+        manaRegen = newManaRegen;
+        
+        // Inicializar variables de red
+        networkHealth.Value = maxHealth;
+        networkMana.Value = maxMana;
+        
+        Debug.Log($"[PlayerStats] Stats inicializadas directamente - HP:{maxHealth}, MP:{maxMana}, HPRegen:{healthRegen}, MPRegen:{manaRegen}");
+        
+        // Notificar a los clientes
+        OnHealthChanged?.Invoke(networkHealth.Value, maxHealth);
+        OnManaChanged?.Invoke(networkMana.Value, maxMana);
+    }
+    catch (System.Exception e) {
+        Debug.LogError($"[PlayerStats] Error en InitializeStatsDirectly: {e.Message}");
+    }
+}
 }
