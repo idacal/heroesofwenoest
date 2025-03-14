@@ -1,5 +1,6 @@
 using Unity.Netcode;
 using UnityEngine;
+using System.Collections;
 using System.Collections.Generic;
 using System;
 
@@ -11,8 +12,8 @@ public class HeroSelectionManager : NetworkBehaviour
     [SerializeField] private GameObject connectionPanel; // Reference to hide connection UI during selection
     
     [Header("Hero Data")]
-    [SerializeField] private HeroDefinition[] availableHeroes; // Cambiado de HeroData[] a HeroDefinition[]
-    [SerializeField] private GameObject basePlayerPrefab; // Renombrado de defaultPlayerPrefab
+    [SerializeField] private HeroDefinition[] availableHeroes;
+    [SerializeField] private GameObject basePlayerPrefab;
     
     [Header("Settings")]
     [SerializeField] private float selectionTimeLimit = 30f; // Optional time limit for selection
@@ -24,7 +25,7 @@ public class HeroSelectionManager : NetworkBehaviour
         0f, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
     
     // Dictionary to track player selections, using NetworkList for sync
-    private readonly NetworkList<PlayerHeroSelection> playerSelections;
+    private NetworkList<PlayerHeroSelection> playerSelections;
     
     // Dictionary to store hero selections for game manager
     private Dictionary<ulong, int> playerHeroSelections = new Dictionary<ulong, int>();
@@ -32,15 +33,31 @@ public class HeroSelectionManager : NetworkBehaviour
     // Local tracking of our selection and ready state
     private int localSelectedHeroIndex = -1;
     private bool localPlayerReady = false;
+    private bool networkListInitialized = false;
     
-    // Constructor for NetworkList initialization
-    public HeroSelectionManager()
+    // Awake is called when the script instance is being loaded
+    private void Awake()
     {
-        playerSelections = new NetworkList<PlayerHeroSelection>();
+        // Initialize NetworkList in Awake instead of constructor
+        // This ensures it's only created once the object is actually in use
+        InitializeNetworkList();
+    }
+    
+    private void InitializeNetworkList()
+    {
+        if (!networkListInitialized)
+        {
+            playerSelections = new NetworkList<PlayerHeroSelection>();
+            networkListInitialized = true;
+            Debug.Log("[HeroSelectionManager] NetworkList initialized");
+        }
     }
     
     public override void OnNetworkSpawn()
     {
+        // Ensure NetworkList is initialized
+        InitializeNetworkList();
+        
         // Subscribe to selection changes
         playerSelections.OnListChanged += OnPlayerSelectionsChanged;
         
@@ -110,7 +127,60 @@ public class HeroSelectionManager : NetworkBehaviour
     public override void OnNetworkDespawn()
     {
         // Unsubscribe from events
-        playerSelections.OnListChanged -= OnPlayerSelectionsChanged;
+        if (playerSelections != null)
+        {
+            try 
+            {
+                playerSelections.OnListChanged -= OnPlayerSelectionsChanged;
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[HeroSelectionManager] Error unsubscribing from NetworkList: {e.Message}");
+            }
+        }
+        
+        Debug.Log("[HeroSelectionManager] OnNetworkDespawn cleanup completed");
+    }
+    
+    public void OnDisable()
+    {
+        // Ensure we unsubscribe when disabled
+        if (playerSelections != null)
+        {
+            try 
+            {
+                playerSelections.OnListChanged -= OnPlayerSelectionsChanged;
+            }
+            catch (System.Exception) { /* Ignore any errors here */ }
+        }
+    }
+    
+    public void OnDestroy()
+    {
+        Debug.Log("[HeroSelectionManager] OnDestroy called");
+        
+        // Dispose networkList to prevent memory leaks
+        if (playerSelections != null && networkListInitialized)
+        {
+            // Final cleanup of events if somehow still subscribed
+            try
+            {
+                playerSelections.OnListChanged -= OnPlayerSelectionsChanged;
+            }
+            catch (System.Exception) { /* Ignore any errors here */ }
+            
+            try
+            {
+                // Dispose the NetworkList
+                playerSelections.Dispose();
+                networkListInitialized = false;
+                Debug.Log("[HeroSelectionManager] NetworkList disposed successfully");
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[HeroSelectionManager] Error disposing NetworkList: {e.Message}");
+            }
+        }
     }
     
     private void Update()
@@ -247,7 +317,7 @@ public class HeroSelectionManager : NetworkBehaviour
     
     private System.Collections.IEnumerator DelayedCheckAllPlayersReady(float delay)
     {
-        yield return new UnityEngine.WaitForSeconds(delay);
+        yield return new WaitForSeconds(delay);
         CheckAllPlayersReady();
     }
     
@@ -276,15 +346,15 @@ public class HeroSelectionManager : NetworkBehaviour
     {
         if (!IsClient || localSelectedHeroIndex < 0) return;
         
-        Debug.Log($"[HeroSelectionManager] Confirmando selección de héroe: índice={localSelectedHeroIndex}");
+        Debug.Log($"[HeroSelectionManager] Confirming hero selection: index={localSelectedHeroIndex}");
         
         if (availableHeroes != null && localSelectedHeroIndex < availableHeroes.Length)
         {
-            Debug.Log($"[HeroSelectionManager] Héroe seleccionado: {availableHeroes[localSelectedHeroIndex].heroName}");
+            Debug.Log($"[HeroSelectionManager] Selected hero: {availableHeroes[localSelectedHeroIndex].heroName}");
         }
         else
         {
-            Debug.LogError($"[HeroSelectionManager] Error: índice de héroe inválido o array de héroes no configurado");
+            Debug.LogError($"[HeroSelectionManager] Error: invalid hero index or hero array not configured");
         }
         
         // Update local state
@@ -349,41 +419,41 @@ public class HeroSelectionManager : NetworkBehaviour
     private void ConfirmHeroSelectionServerRpc(ServerRpcParams rpcParams = default)
     {
         ulong clientId = rpcParams.Receive.SenderClientId;
-        Debug.Log($"[HeroSelectionManager] Servidor recibió confirmación del cliente {clientId}");
+        Debug.Log($"[HeroSelectionManager] Server received confirmation from client {clientId}");
         
-        // Encontrar la entrada de selección de este jugador
+        // Find this player's selection entry
         for (int i = 0; i < playerSelections.Count; i++)
         {
             if (playerSelections[i].clientId == clientId)
             {
-                // Asegurarse de que tienen una selección válida
+                // Ensure they have a valid selection
                 if (playerSelections[i].selectedHeroIndex >= 0)
                 {
-                    // Actualizar el estado de preparado
+                    // Update ready state
                     PlayerHeroSelection selection = playerSelections[i];
                     selection.isReady = true;
                     playerSelections[i] = selection;
                     
-                    // AÑADIR: Verificación adicional
+                    // ADDED: Additional verification
                     int heroIndex = selection.selectedHeroIndex;
-                    Debug.Log($"[HeroSelectionManager] Cliente {clientId} confirmó héroe con índice {heroIndex}");
+                    Debug.Log($"[HeroSelectionManager] Client {clientId} confirmed hero with index {heroIndex}");
                     
-                    // Verificar disponibilidad de héroe
+                    // Verify hero availability
                     if (availableHeroes != null && heroIndex < availableHeroes.Length && availableHeroes[heroIndex] != null)
                     {
-                        Debug.Log($"[HeroSelectionManager] Héroe confirmado: {availableHeroes[heroIndex].heroName}");
+                        Debug.Log($"[HeroSelectionManager] Confirmed hero: {availableHeroes[heroIndex].heroName}");
                     }
                     else
                     {
-                        Debug.LogError($"[HeroSelectionManager] Error: Índice de héroe {heroIndex} no disponible en availableHeroes");
+                        Debug.LogError($"[HeroSelectionManager] Error: Hero index {heroIndex} not available in availableHeroes");
                     }
                     
-                    // Verificar si todos los jugadores están listos
+                    // Check if all players are ready
                     CheckAllPlayersReady();
                 }
                 else
                 {
-                    Debug.LogWarning($"[HeroSelectionManager] El cliente {clientId} intentó confirmar sin seleccionar un héroe");
+                    Debug.LogWarning($"[HeroSelectionManager] Client {clientId} attempted to confirm without selecting a hero");
                     NotifyInvalidConfirmationClientRpc(clientId);
                 }
                 break;
@@ -538,7 +608,7 @@ public class HeroSelectionManager : NetworkBehaviour
         }
     }
     
-    // Public getter for hero data - cambiado para que trabaje con HeroDefinition
+    // Public getter for hero data
     public HeroDefinition GetHeroDefinition(int index)
     {
         if (availableHeroes != null && index >= 0 && index < availableHeroes.Length)
@@ -548,7 +618,7 @@ public class HeroSelectionManager : NetworkBehaviour
         return null;
     }
     
-    // Método de compatibilidad para código antiguo
+    // Compatibility method for old code
     public HeroData GetHeroData(int index)
     {
         Debug.LogWarning("[HeroSelectionManager] GetHeroData is deprecated, use GetHeroDefinition instead");
@@ -629,7 +699,7 @@ public class HeroSelectionManager : NetworkBehaviour
             Debug.Log($"[HeroSelectionManager] Client {clientId} selected hero with index {heroIndex}");
             
             // Check if the hero index is valid
-            if (heroIndex >= 0 && heroIndex < availableHeroes.Length)
+            if (heroIndex >= 0 && availableHeroes != null && heroIndex < availableHeroes.Length)
             {
                 // Get the hero definition
                 HeroDefinition heroDefinition = availableHeroes[heroIndex];
@@ -637,8 +707,8 @@ public class HeroSelectionManager : NetworkBehaviour
                 if (heroDefinition != null)
                 {
                     Debug.Log($"[HeroSelectionManager] Using hero definition for client {clientId}: {heroDefinition.heroName}");
-                    // En la nueva arquitectura, el GameManager se encarga de instanciar el basePlayerPrefab
-                    // y configurar el componente Hero con la definición
+                    // In the new architecture, the GameManager handles instantiating the basePlayerPrefab
+                    // and configuring the Hero component with the definition
                 }
                 else
                 {
@@ -659,8 +729,8 @@ public class HeroSelectionManager : NetworkBehaviour
     // Updated method to get hero prefab for player
     private GameObject GetBasePlayerPrefab()
     {
-        // En la nueva arquitectura, siempre devolvemos el mismo prefab base
-        // y la configuración específica del héroe se realiza a través del componente Hero
+        // In the new architecture, we always return the same base prefab
+        // and the specific hero configuration is done through the Hero component
         return basePlayerPrefab;
     }
 }
