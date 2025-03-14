@@ -18,6 +18,7 @@ public class AbilityUIManager : MonoBehaviour
     [SerializeField] private Color cooldownColor = new Color(0.5f, 0.5f, 0.5f, 0.7f);
     [SerializeField] private bool showAbilityTooltips = true;
     [SerializeField] private bool showCooldownText = true;
+    [SerializeField] private bool showDebugInfo = true;
 
     // Referencias a componentes del jugador
     private PlayerNetwork playerNetwork;
@@ -41,10 +42,31 @@ public class AbilityUIManager : MonoBehaviour
 
     private void Awake()
     {
+        Debug.Log("[AbilityUIManager] Initializing...");
+        
         // Verificar si tenemos el container de habilidades
         if (abilityContainer == null)
         {
             Debug.LogError("[AbilityUIManager] abilityContainer no está asignado!");
+            
+            // Intentar encontrar un contenedor adecuado en el canvas
+            Canvas canvas = GetComponentInParent<Canvas>();
+            if (canvas != null)
+            {
+                RectTransform[] possibleContainers = canvas.GetComponentsInChildren<RectTransform>();
+                foreach (var container in possibleContainers)
+                {
+                    if (container.name.ToLower().Contains("ability") || 
+                        container.name.ToLower().Contains("skill") || 
+                        container.name.ToLower().Contains("bar"))
+                    {
+                        Debug.Log($"[AbilityUIManager] Candidato para abilityContainer encontrado: {container.name}");
+                        
+                        // Podría hacer una asignación automática aquí, pero es mejor que el usuario lo asigne manualmente
+                    }
+                }
+            }
+            
             enabled = false;
             return;
         }
@@ -63,26 +85,36 @@ public class AbilityUIManager : MonoBehaviour
             Destroy(child.gameObject);
         }
         abilitySlots.Clear();
+        
+        Debug.Log("[AbilityUIManager] Inicializado correctamente");
     }
 
     private void Start()
     {
-        // Iniciar la búsqueda de componentes del jugador
-        StartCoroutine(FindPlayerComponents());
-
+        Debug.Log("[AbilityUIManager] Starting...");
+        
         // Crear slots vacíos para habilidades
         CreateAbilitySlots();
+        
+        // Iniciar la búsqueda de componentes del jugador
+        StartCoroutine(FindPlayerComponents());
     }
 
     private IEnumerator FindPlayerComponents()
     {
-        int maxRetries = 15;
+        int maxRetries = 30;  // Aumentado para permitir más intentos
         int retryCount = 0;
+        float initialDelay = 1.0f;  // Esperar un tiempo inicial para que todo se inicialice
+        
+        Debug.Log("[AbilityUIManager] Waiting initial delay before searching for player...");
+        yield return new WaitForSeconds(initialDelay);
         
         while (retryCount < maxRetries)
         {
             // Buscar en todos los jugadores existentes
             PlayerNetwork[] allPlayers = FindObjectsOfType<PlayerNetwork>();
+            Debug.Log($"[AbilityUIManager] Found {allPlayers.Length} PlayerNetwork components in scene");
+            
             foreach (var player in allPlayers)
             {
                 if (player.IsLocalPlayer)
@@ -96,8 +128,16 @@ public class AbilityUIManager : MonoBehaviour
                     if (abilityManager != null)
                     {
                         Debug.Log("[AbilityUIManager] Componentes encontrados con éxito");
+                        
+                        // Esperar un momento para asegurar que las habilidades estén inicializadas
+                        yield return new WaitForSeconds(0.5f);
+                        
                         SetupAbilityUI();
-                        yield break;  // Corregido: antes era return; debe ser yield break;
+                        yield break;
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[AbilityUIManager] Jugador local encontrado pero no tiene PlayerAbilityManager");
                     }
                 }
             }
@@ -105,15 +145,26 @@ public class AbilityUIManager : MonoBehaviour
             // Si no se encontraron, esperar un tiempo y reintentar
             retryCount++;
             float waitTime = 1.0f;
-            Debug.LogWarning($"[AbilityUIManager] No se pudieron encontrar los componentes del jugador, reintentando en {waitTime} segundo(s)... (intento {retryCount}/{maxRetries})");
+            Debug.Log($"[AbilityUIManager] No se pudieron encontrar los componentes del jugador, reintentando en {waitTime} segundo(s)... (intento {retryCount}/{maxRetries})");
             yield return new WaitForSeconds(waitTime);
         }
         
         Debug.LogError("[AbilityUIManager] No se pudieron encontrar los componentes del jugador después de múltiples reintentos");
+        
+        // Como último recurso, buscar cualquier PlayerAbilityManager en la escena
+        PlayerAbilityManager[] allManagers = FindObjectsOfType<PlayerAbilityManager>();
+        if (allManagers.Length > 0)
+        {
+            Debug.LogWarning($"[AbilityUIManager] Usando el primer PlayerAbilityManager encontrado ({allManagers[0].name}) como recurso de emergencia");
+            abilityManager = allManagers[0];
+            SetupAbilityUI();
+        }
     }
 
     private void CreateAbilitySlots()
     {
+        Debug.Log($"[AbilityUIManager] Creating {maxAbilitySlots} ability slots");
+        
         // Crear los slots de habilidad vacíos
         for (int i = 0; i < maxAbilitySlots; i++)
         {
@@ -132,6 +183,29 @@ public class AbilityUIManager : MonoBehaviour
             newSlot.cooldownOverlay = slotObject.transform.Find("CooldownOverlay")?.GetComponent<Image>();
             newSlot.cooldownText = slotObject.transform.Find("CooldownText")?.GetComponent<TextMeshProUGUI>();
             newSlot.keyBindText = slotObject.transform.Find("KeyBindText")?.GetComponent<TextMeshProUGUI>();
+
+            // Verificar que se encontraron todas las referencias
+            bool missingComponents = false;
+            if (newSlot.abilityIcon == null) { 
+                Debug.LogError($"[AbilityUIManager] AbilityIcon no encontrado en {slotObject.name}");
+                missingComponents = true;
+            }
+            if (newSlot.cooldownOverlay == null) { 
+                Debug.LogError($"[AbilityUIManager] CooldownOverlay no encontrado en {slotObject.name}");
+                missingComponents = true;
+            }
+            if (newSlot.cooldownText == null) { 
+                Debug.LogError($"[AbilityUIManager] CooldownText no encontrado en {slotObject.name}");
+                missingComponents = true;
+            }
+            if (newSlot.keyBindText == null) { 
+                Debug.LogError($"[AbilityUIManager] KeyBindText no encontrado en {slotObject.name}");
+                missingComponents = true;
+            }
+            
+            if (missingComponents) {
+                Debug.LogError($"[AbilityUIManager] Slot {i} tiene componentes faltantes. Verifica la estructura del prefab.");
+            }
 
             // Configurar estado inicial
             if (newSlot.abilityIcon != null)
@@ -162,6 +236,8 @@ public class AbilityUIManager : MonoBehaviour
             // Agregar a la lista
             abilitySlots.Add(newSlot);
         }
+        
+        Debug.Log($"[AbilityUIManager] Created {abilitySlots.Count} ability slots");
     }
 
     private void SetupAbilityUI()
@@ -172,12 +248,26 @@ public class AbilityUIManager : MonoBehaviour
             return;
         }
 
+        Debug.Log("[AbilityUIManager] Setting up UI with abilities from PlayerAbilityManager");
+        
         // Actualizar los slots con las habilidades actuales
         UpdateAbilitySlots();
+        
+        // Subscribirse a eventos para actualización continua (si necesario)
+        // Por ahora usaremos Update para mantener la UI actualizada
     }
 
     private void UpdateAbilitySlots()
     {
+        if (abilityManager == null) {
+            Debug.LogWarning("[AbilityUIManager] Cannot update ability slots - abilityManager is null");
+            return;
+        }
+        
+        Debug.Log("[AbilityUIManager] Updating ability slots");
+        
+        int abilitiesFound = 0;
+        
         // Limpiar slots
         for (int i = 0; i < abilitySlots.Count; i++)
         {
@@ -186,7 +276,13 @@ public class AbilityUIManager : MonoBehaviour
 
             // Actualizar el slot con la habilidad (o null si no hay habilidad)
             UpdateSlotWithAbility(slot, ability);
+            
+            if (ability != null) {
+                abilitiesFound++;
+            }
         }
+        
+        Debug.Log($"[AbilityUIManager] Updated ability slots. Found {abilitiesFound} abilities.");
     }
 
     private void UpdateSlotWithAbility(AbilitySlot slot, BaseAbility ability)
@@ -214,8 +310,15 @@ public class AbilityUIManager : MonoBehaviour
         // Hay una habilidad, configurar visuales
         if (slot.abilityIcon != null)
         {
-            slot.abilityIcon.enabled = true;
-            slot.abilityIcon.sprite = ability.icon;
+            if (ability.icon != null) {
+                slot.abilityIcon.enabled = true;
+                slot.abilityIcon.sprite = ability.icon;
+                Debug.Log($"[AbilityUIManager] Slot {slot.slotIndex}: Set icon for {ability.abilityName}");
+            }
+            else {
+                Debug.LogWarning($"[AbilityUIManager] Ability {ability.abilityName} has no icon!");
+                slot.abilityIcon.enabled = false;
+            }
         }
 
         if (slot.keyBindText != null)
@@ -235,6 +338,10 @@ public class AbilityUIManager : MonoBehaviour
         {
             slot.cooldownText.text = "";
             slot.cooldownText.enabled = false;
+        }
+        
+        if (showDebugInfo) {
+            Debug.Log($"[AbilityUIManager] Slot {slot.slotIndex} updated with {ability.abilityName}, key: {ability.activationKey}");
         }
     }
 
@@ -306,7 +413,23 @@ public class AbilityUIManager : MonoBehaviour
     {
         if (abilityManager != null)
         {
+            Debug.Log("[AbilityUIManager] Forcing UI refresh");
             UpdateAbilitySlots();
+        }
+        else
+        {
+            Debug.LogWarning("[AbilityUIManager] Cannot refresh UI - no abilityManager");
+            
+            // Intentar buscar el manager nuevamente
+            if (playerNetwork != null) {
+                abilityManager = playerNetwork.GetComponent<PlayerAbilityManager>();
+                if (abilityManager != null) {
+                    Debug.Log("[AbilityUIManager] Found abilityManager, refreshing UI");
+                    UpdateAbilitySlots();
+                }
+            } else {
+                StartCoroutine(FindPlayerComponents());
+            }
         }
     }
 }

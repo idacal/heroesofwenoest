@@ -51,37 +51,46 @@ public class DamagerHero : Hero
     }
     
     // ACTUALIZADO: Sobrescribe el método de inicialización de habilidades para usar PlayerAbilityManager
-    public override void InitializeHeroAbilities()
+    // ACTUALIZADO: Sobrescribe el método de inicialización de habilidades para usar PlayerAbilityManager
+public override void InitializeHeroAbilities()
+{
+    Debug.Log($"[DamagerHero] Initializing abilities for {heroName}");
+    
+    // Asegurarnos de tener el PlayerAbilityManager
+    if (abilityManager == null)
     {
-        Debug.Log($"[DamagerHero] Initializing abilities for {heroName}");
-        
-        // Asegurarnos de tener el PlayerAbilityManager
-        if (abilityManager == null)
-        {
-            abilityManager = GetComponent<PlayerAbilityManager>();
-        }
-        
-        if (abilityManager == null)
-        {
-            Debug.LogError("[DamagerHero] No PlayerAbilityManager found!");
-            return;
-        }
-        
-        // Clear any existing abilities first
-        abilityManager.RemoveAllAbilities();
-        
+        abilityManager = GetComponent<PlayerAbilityManager>();
+    }
+    
+    if (abilityManager == null)
+    {
+        Debug.LogError("[DamagerHero] No PlayerAbilityManager found!");
+        return;
+    }
+    
+    // Clear any existing abilities first
+    abilityManager.RemoveAllAbilities();
+    
+    try {
         // Add Striker-specific abilities con slots específicos para UI
         dashAbility = abilityManager.AddAbility<DashAbility>(0);
-        strongJumpAbility = abilityManager.AddAbility<StrongJumpAbility>(1);
-        kineticShieldAbility = abilityManager.AddAbility<KineticShieldAbility>(2);
-        supersonicMissileAbility = abilityManager.AddAbility<SupersonicMissileAbility>(3);
+        Debug.Log($"[DamagerHero] Added DashAbility: {dashAbility != null}");
         
-        Debug.Log($"[DamagerHero] Successfully initialized abilities for {heroName}: " +
-                  $"Dash: {dashAbility != null}, " +
-                  $"StrongJump: {strongJumpAbility != null}, " +
-                  $"KineticShield: {kineticShieldAbility != null}, " +
-                  $"SupersonicMissile: {supersonicMissileAbility != null}");
+        strongJumpAbility = abilityManager.AddAbility<StrongJumpAbility>(1);
+        Debug.Log($"[DamagerHero] Added StrongJumpAbility: {strongJumpAbility != null}");
+        
+        kineticShieldAbility = abilityManager.AddAbility<KineticShieldAbility>(2);
+        Debug.Log($"[DamagerHero] Added KineticShieldAbility: {kineticShieldAbility != null}");
+        
+        supersonicMissileAbility = abilityManager.AddAbility<SupersonicMissileAbility>(3);
+        Debug.Log($"[DamagerHero] Added SupersonicMissileAbility: {supersonicMissileAbility != null}");
+        
+        Debug.Log($"[DamagerHero] Successfully initialized abilities for {heroName}");
     }
+    catch (System.Exception e) {
+        Debug.LogError($"[DamagerHero] Error initializing abilities: {e.Message}\n{e.StackTrace}");
+    }
+}
     
     private void InitializeHeroServer()
     {

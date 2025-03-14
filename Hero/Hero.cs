@@ -147,30 +147,31 @@ public class Hero : NetworkBehaviour
     }
     
     // Método mejorado para inicializar habilidades de héroe
-    public virtual void InitializeHeroAbilities()
+    // Método mejorado para inicializar habilidades de héroe
+public virtual void InitializeHeroAbilities()
+{
+    Debug.Log($"[Hero] Initializing abilities for {heroName}");
+    
+    // Get the ability manager - ACTUALIZADO para usar PlayerAbilityManager
+    if (abilityManager == null)
     {
-        Debug.Log($"[Hero] Initializing abilities for {heroName}");
-        
-        // Get the ability manager - ACTUALIZADO para usar PlayerAbilityManager
-        if (abilityManager == null)
-        {
-            abilityManager = GetComponent<PlayerAbilityManager>();
-        }
-        
-        if (abilityManager == null)
-        {
-            Debug.LogError("[Hero] No PlayerAbilityManager found! Abilities can't be initialized.");
-            return;
-        }
-        
-        // Clear any existing abilities first
-        abilityManager.RemoveAllAbilities();
-        
-        // In the base class, we don't add specific abilities
-        // Derived hero classes will override this method to add their specific abilities
-        
-        Debug.Log($"[Hero] Base initialization complete for {heroName}. Abilities will be added in derived classes.");
+        abilityManager = GetComponent<PlayerAbilityManager>();
     }
+    
+    if (abilityManager == null)
+    {
+        Debug.LogError("[Hero] No PlayerAbilityManager found! Abilities can't be initialized.");
+        return;
+    }
+    
+    // Clear any existing abilities first
+    abilityManager.RemoveAllAbilities();
+    
+    // In the base class, we don't add specific abilities
+    // Derived hero classes will override this method to add their specific abilities
+    
+    Debug.Log($"[Hero] Base initialization complete for {heroName}. Abilities will be added in derived classes.");
+}
     
     // This method can be called when the hero's abilities should be activated based on game state
     public virtual void ActivateHeroAbilities()

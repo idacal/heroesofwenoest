@@ -32,6 +32,8 @@ public class DashAbility : BaseAbility
     
     // Referencias a componentes externos
     private PlayerAbilityController abilityController;
+    // NUEVO: Añadir referencia al nuevo sistema
+    private PlayerAbilityManager abilityManager;
     
     public override void Initialize(NetworkBehaviour owner)
     {
@@ -41,32 +43,67 @@ public class DashAbility : BaseAbility
         manaCost = dashInitialManaCost;
         cooldown = 3f;
         
+        // MODIFICADO: Intentar obtener ambos componentes para compatibilidad
+        abilityManager = owner.GetComponent<PlayerAbilityManager>();
         abilityController = owner.GetComponent<PlayerAbilityController>();
+        
+        if (abilityManager == null && abilityController == null)
+        {
+            Debug.LogWarning("[DashAbility] Neither PlayerAbilityManager nor PlayerAbilityController found!");
+        }
+        else
+        {
+            Debug.Log($"[DashAbility] Initialized successfully. Using abilityManager: {abilityManager != null}, abilityController: {abilityController != null}");
+        }
     }
     
     public override bool CanActivate()
     {
-        // Verificar si hay movimiento activo
-        bool isMoving = abilityController.IsMoving();
+        // MODIFICADO: Verificar si hay movimiento activo usando ambos sistemas
+        bool isMoving = false;
+        
+        if (abilityManager != null)
+        {
+            isMoving = abilityManager.IsMoving();
+        }
+        else if (abilityController != null)
+        {
+            isMoving = abilityController.IsMoving();
+        }
         
         if (!isMoving)
         {
-            if (networkOwner.IsOwner)
+            if (networkOwner != null && networkOwner.IsOwner)
             {
                 Debug.Log("No se puede usar dash: No hay dirección de movimiento");
             }
             return false;
         }
         
-        return isReady && playerStats.CurrentMana >= dashInitialManaCost;
+        return isReady && playerStats != null && playerStats.CurrentMana >= dashInitialManaCost;
     }
     
     public override void Activate()
     {
         if (isDashing) return;
         
-        // Obtener la posición objetivo desde el controlador de habilidades
-        Vector3 targetPosition = abilityController.GetTargetPosition();
+        // MODIFICADO: Obtener la posición objetivo desde el sistema apropiado
+        Vector3 targetPosition = Vector3.zero;
+        
+        if (abilityManager != null)
+        {
+            targetPosition = abilityManager.GetTargetPosition();
+        }
+        else if (abilityController != null)
+        {
+            targetPosition = abilityController.GetTargetPosition();
+        }
+        else
+        {
+            // Fallback: usar la posición hacia adelante del jugador
+            targetPosition = networkOwner.transform.position + networkOwner.transform.forward * 5f;
+            Debug.LogWarning("[DashAbility] No ability controller/manager found. Using fallback direction.");
+        }
         
         // Usar la dirección hacia el punto de clic
         dashDirection = (targetPosition - networkOwner.transform.position).normalized;
@@ -117,7 +154,7 @@ public class DashAbility : BaseAbility
             float manaCost = dashManaCostPerSecond * Time.deltaTime;
             
             // Si no hay suficiente maná, terminar el dash
-            if (playerStats.CurrentMana < manaCost)
+            if (playerStats != null && playerStats.CurrentMana < manaCost)
             {
                 EndDashEarly();
                 return;
@@ -158,8 +195,22 @@ public class DashAbility : BaseAbility
             }
             
             // Actualizar dirección del dash mientras se mantiene presionado
-            Vector3 targetPosition = abilityController.GetTargetPosition();
-            if (abilityController.IsMoving() && Vector3.Distance(networkOwner.transform.position, targetPosition) > 1.0f)
+            Vector3 targetPosition = Vector3.zero;
+            bool isMoving = false;
+            
+            // MODIFICADO: Obtener nueva dirección basada en el sistema disponible
+            if (abilityManager != null)
+            {
+                targetPosition = abilityManager.GetTargetPosition();
+                isMoving = abilityManager.IsMoving();
+            }
+            else if (abilityController != null)
+            {
+                targetPosition = abilityController.GetTargetPosition();
+                isMoving = abilityController.IsMoving();
+            }
+            
+            if (isMoving && Vector3.Distance(networkOwner.transform.position, targetPosition) > 1.0f)
             {
                 // Reorientar gradualmente el dash hacia el punto de destino
                 Vector3 newDirection = (targetPosition - networkOwner.transform.position).normalized;
@@ -202,7 +253,10 @@ public class DashAbility : BaseAbility
         StartCoroutine(SmoothDashEnd());
         
         // Activar cooldown
-        networkOwner.StartCoroutine(StartCooldown());
+        if (networkOwner != null)
+        {
+            networkOwner.StartCoroutine(StartCooldown());
+        }
     }
     
     private void EndDashComplete()
@@ -214,7 +268,10 @@ public class DashAbility : BaseAbility
         StartCoroutine(SmoothDashEnd());
         
         // Activar cooldown
-        networkOwner.StartCoroutine(StartCooldown());
+        if (networkOwner != null)
+        {
+            networkOwner.StartCoroutine(StartCooldown());
+        }
     }
     
     private IEnumerator SmoothDashEnd()
@@ -257,7 +314,10 @@ public class DashAbility : BaseAbility
     private void ConsumeDashManaServerRpc(float amount)
     {
         // Consumir maná durante el dash continuo
-        playerStats.UseMana(amount);
+        if (playerStats != null)
+        {
+            playerStats.UseMana(amount);
+        }
     }
     
     // Propiedades públicas para que otros sistemas puedan consultar el estado
