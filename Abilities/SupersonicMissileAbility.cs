@@ -35,6 +35,9 @@ public class SupersonicMissileAbility : BaseAbility
     private PlayerNetwork playerNetwork;
     private DashAbility dashAbility;
     
+    // NUEVO: Referencia al PlayerAbilityManager
+    private PlayerAbilityManager abilityManager;
+    
     // Variables para rastrear el tiempo desde el último dash
     private float lastDashTime = -10f;
     private bool dashSynergyActive = false;
@@ -47,9 +50,21 @@ public class SupersonicMissileAbility : BaseAbility
         manaCost = 120f;
         cooldown = 60f;
         
+        Debug.Log("[SupersonicMissileAbility] Initializing...");
+        
         // Obtener referencias
         playerNetwork = owner.GetComponent<PlayerNetwork>();
         dashAbility = owner.GetComponent<DashAbility>();
+        
+        // NUEVO: Obtener referencia al PlayerAbilityManager
+        abilityManager = owner.GetComponent<PlayerAbilityManager>();
+        
+        // Verificar que tengamos los componentes necesarios
+        if (playerNetwork == null)
+            Debug.LogWarning("[SupersonicMissileAbility] PlayerNetwork not found!");
+            
+        if (missilePrefab == null)
+            Debug.LogError("[SupersonicMissileAbility] missilePrefab not assigned!");
         
         // Suscribirse a eventos de dash si existe
         if (dashAbility != null && enableDashSynergy)
@@ -57,6 +72,8 @@ public class SupersonicMissileAbility : BaseAbility
             // Monitorear el estado del Dash para detectar cuando termina
             StartCoroutine(MonitorDashState());
         }
+        
+        Debug.Log($"[SupersonicMissileAbility] Initialized with key {activationKey}, playerNetwork: {playerNetwork != null}, missilePrefab: {missilePrefab != null}");
     }
     
     private IEnumerator MonitorDashState()
@@ -93,11 +110,27 @@ public class SupersonicMissileAbility : BaseAbility
     
     public override bool CanActivate()
     {
+        // Verificar que tengamos missilePrefab
+        if (missilePrefab == null)
+        {
+            Debug.LogError("[SupersonicMissileAbility] Cannot activate: missilePrefab is null!");
+            return false;
+        }
+        
+        // Verificar que playerStats no sea null
+        if (playerStats == null)
+        {
+            Debug.LogWarning("[SupersonicMissileAbility] playerStats is null in CanActivate!");
+            return false;
+        }
+        
         return isReady && playerStats.CurrentMana >= manaCost;
     }
     
     public override void Activate()
     {
+        Debug.Log("[SupersonicMissileAbility] Activate called");
+        
         if (networkOwner.IsOwner)
         {
             Debug.Log("[SupersonicMissile] Activando Misil Supersónico");
@@ -117,8 +150,26 @@ public class SupersonicMissileAbility : BaseAbility
     {
         float currentSpeed = 0f;
         
-        // Obtener velocidad actual
-        if (playerNetwork != null)
+        // Obtener velocidad actual, primero intentar con PlayerAbilityManager
+        if (abilityManager != null)
+        {
+            // Usar información del manager para determinar si estamos en dash
+            if (dashAbility != null && dashAbility.IsDashing)
+            {
+                currentSpeed = maxSpeedForBonus;
+            }
+            else if (playerNetwork != null)
+            {
+                // Calcular velocidad basada en el Rigidbody
+                Rigidbody rb = networkOwner.GetComponent<Rigidbody>();
+                if (rb != null)
+                {
+                    currentSpeed = rb.velocity.magnitude;
+                }
+            }
+        }
+        // Fallback al playerNetwork directamente
+        else if (playerNetwork != null)
         {
             // Si estamos en dash, usar velocidad máxima
             if (dashAbility != null && dashAbility.IsDashing)
@@ -151,15 +202,37 @@ public class SupersonicMissileAbility : BaseAbility
     [ServerRpc]
     private void LaunchMissileServerRpc(float speedMultiplier, bool useDashSynergy)
     {
-        // Verificar cooldown y mana
-        if (!isReady || !playerStats.UseMana(manaCost))
+        Debug.Log($"[SupersonicMissile] LaunchMissileServerRpc received, multiplier: {speedMultiplier}, dash synergy: {useDashSynergy}");
+        
+        // Verificar que missilePrefab no sea null
+        if (missilePrefab == null)
         {
+            Debug.LogError("[SupersonicMissileAbility] missilePrefab is null in LaunchMissileServerRpc!");
+            return;
+        }
+        
+        // Verificar cooldown y mana
+        if (!isReady)
+        {
+            Debug.Log("[SupersonicMissileAbility] Cannot launch: ability on cooldown");
+            return;
+        }
+        
+        if (playerStats == null)
+        {
+            Debug.LogError("[SupersonicMissileAbility] playerStats is null in LaunchMissileServerRpc!");
+            return;
+        }
+        
+        if (!playerStats.UseMana(manaCost))
+        {
+            Debug.Log("[SupersonicMissileAbility] Cannot launch: not enough mana");
             return;
         }
         
         // Determinar la posición de lanzamiento y dirección
         Vector3 spawnPosition = networkOwner.transform.position + Vector3.up * 1.2f;
-        Vector3 direction;
+        Vector3 direction = Vector3.zero;
         
         // Dirección basada en movimiento o vista
         if (playerNetwork != null && playerNetwork.IsMoving())
@@ -175,47 +248,63 @@ public class SupersonicMissileAbility : BaseAbility
         float enhancedDamage = baseDamage * speedMultiplier;
         float enhancedRadius = baseExplosionRadius * (1 + (speedMultiplier - 1) * 0.5f);
         
-        // Crear el misil
-        GameObject missile = Instantiate(missilePrefab, spawnPosition, Quaternion.LookRotation(direction));
-        
-        // Configurar el misil
-        SupersonicMissileProjectile missileComponent = missile.AddComponent<SupersonicMissileProjectile>();
-        missileComponent.Initialize(
-            direction, 
-            missileSpeed, 
-            missileLifetime, 
-            enhancedDamage, 
-            enhancedRadius, 
-            networkOwner.OwnerClientId,  // CORREGIDO: usar networkOwner.OwnerClientId
-            useDashSynergy,
-            fragmentCount,
-            fragmentDamagePercent,
-            fragmentRadius,
-            explosionEffectPrefab,
-            fragmentPrefab
-        );
-        
-        // Spawner en la red
-        NetworkObject missileNetObj = missile.GetComponent<NetworkObject>();
-        if (missileNetObj != null)
+        try
         {
-            missileNetObj.Spawn();
+            // Crear el misil
+            GameObject missile = Instantiate(missilePrefab, spawnPosition, Quaternion.LookRotation(direction));
+            
+            // Configurar el misil
+            SupersonicMissileProjectile missileComponent = missile.AddComponent<SupersonicMissileProjectile>();
+            missileComponent.Initialize(
+                direction, 
+                missileSpeed, 
+                missileLifetime, 
+                enhancedDamage, 
+                enhancedRadius, 
+                networkOwner.OwnerClientId,
+                useDashSynergy,
+                fragmentCount,
+                fragmentDamagePercent,
+                fragmentRadius,
+                explosionEffectPrefab,
+                fragmentPrefab
+            );
+            
+            // Spawner en la red
+            NetworkObject missileNetObj = missile.GetComponent<NetworkObject>();
+            if (missileNetObj != null)
+            {
+                missileNetObj.Spawn();
+            }
+            else
+            {
+                Debug.LogError("[SupersonicMissileAbility] Missile does not have NetworkObject component!");
+                // Añadir NetworkObject si no existe
+                missileNetObj = missile.AddComponent<NetworkObject>();
+                missileNetObj.Spawn();
+            }
+            
+            // Añadir collider si no tiene
+            if (missile.GetComponent<Collider>() == null)
+            {
+                SphereCollider collider = missile.AddComponent<SphereCollider>();
+                collider.radius = 0.5f;
+                collider.isTrigger = true;
+            }
+            
+            // Mostrar mensaje informativo sobre el estado de la habilidad
+            string synergyMsg = useDashSynergy ? ", CON fragmentación" : ", SIN fragmentación";
+            LaunchMissileInfoClientRpc(enhancedDamage, enhancedRadius, speedMultiplier, synergyMsg);
+            
+            // Iniciar cooldown
+            StartCoroutine(StartCooldown());
+            
+            Debug.Log($"[SupersonicMissile] Missile launched successfully: damage={enhancedDamage}, radius={enhancedRadius}");
         }
-        
-        // Añadir collider si no tiene
-        if (missile.GetComponent<Collider>() == null)
+        catch (System.Exception e)
         {
-            SphereCollider collider = missile.AddComponent<SphereCollider>();
-            collider.radius = 0.5f;
-            collider.isTrigger = true;
+            Debug.LogError($"[SupersonicMissile] Error launching missile: {e.Message}");
         }
-        
-        // Mostrar mensaje informativo sobre el estado de la habilidad
-        string synergyMsg = useDashSynergy ? ", CON fragmentación" : ", SIN fragmentación";
-        LaunchMissileInfoClientRpc(enhancedDamage, enhancedRadius, speedMultiplier, synergyMsg);
-        
-        // Iniciar cooldown
-        StartCoroutine(StartCooldown());
     }
     
     [ClientRpc]
@@ -239,8 +328,6 @@ public class SupersonicMissileAbility : BaseAbility
             {
                 float remainingTime = dashSynergyWindow - (Time.time - lastDashTime);
                 Debug.Log($"[SupersonicMissile] Sinergia con Dash disponible: {remainingTime:F1}s restantes");
-                
-                // Aquí podrías añadir efectos visuales en la UI para indicar la sinergia
             }
         }
     }
@@ -276,16 +363,17 @@ public class SupersonicMissileProjectile : MonoBehaviour
         rb = GetComponent<Rigidbody>();
         if (rb == null)
         {
+            // Si no hay Rigidbody, lo creamos
             rb = gameObject.AddComponent<Rigidbody>();
+            rb.useGravity = false;
+            rb.isKinematic = false;
+            rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
         }
-        
-        // Configuración del Rigidbody
-        rb.useGravity = false;
-        rb.isKinematic = false;
-        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
         
         // Obtener trail si existe
         trail = GetComponent<TrailRenderer>();
+        
+        Debug.Log("[SupersonicMissileProjectile] Projectile created");
     }
     
     public void Initialize(
@@ -323,6 +411,8 @@ public class SupersonicMissileProjectile : MonoBehaviour
         {
             rb.velocity = direction * speed;
         }
+        
+        Debug.Log($"[SupersonicMissileProjectile] Initialized with: speed={speed}, damage={damage}, owner={ownerClientId}");
     }
     
     private void Update()
@@ -432,8 +522,8 @@ public class SupersonicMissileProjectile : MonoBehaviour
         for (int i = 0; i < fragmentCount; i++)
         {
             // Calcular dirección aleatoria para este fragmento
-            float angle = Random.Range(0f, 360f);
-            float distance = Random.Range(2f, 5f);
+            float angle = UnityEngine.Random.Range(0f, 360f);
+            float distance = UnityEngine.Random.Range(2f, 5f);
             
             Vector3 fragmentDirection = Quaternion.Euler(0, angle, 0) * Vector3.forward;
             Vector3 landingPos = position + fragmentDirection * distance;

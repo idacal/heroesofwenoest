@@ -30,6 +30,9 @@ public class KineticShieldAbility : BaseAbility
     private PlayerNetwork playerNetwork;
     private DashAbility dashAbility;
     
+    // NUEVO: Referencia al PlayerAbilityManager
+    private PlayerAbilityManager abilityManager;
+    
     // Para prevenir múltiples activaciones del cooldown
     private bool needsDelayedCooldown = true;
     
@@ -41,9 +44,19 @@ public class KineticShieldAbility : BaseAbility
         manaCost = 70f;
         cooldown = 10f;
         
+        Debug.Log("[KineticShieldAbility] Initializing...");
+        
         // Obtener referencias adicionales
         playerNetwork = owner.GetComponent<PlayerNetwork>();
         dashAbility = owner.GetComponent<DashAbility>();
+        
+        // NUEVO: Obtener referencia al PlayerAbilityManager
+        abilityManager = owner.GetComponent<PlayerAbilityManager>();
+        
+        if (playerNetwork == null)
+            Debug.LogWarning("[KineticShieldAbility] PlayerNetwork not found!");
+        
+        Debug.Log($"[KineticShieldAbility] Initialized with key {activationKey}, playerNetwork: {playerNetwork != null}");
     }
     
     public override bool CanActivate()
@@ -58,11 +71,25 @@ public class KineticShieldAbility : BaseAbility
             return false;
         }
         
+        if (playerStats == null)
+        {
+            Debug.LogWarning("[KineticShieldAbility] playerStats is null in CanActivate!");
+            return false;
+        }
+        
         return isReady && playerStats.CurrentMana >= manaCost;
     }
     
     public override void Activate()
     {
+        Debug.Log("[KineticShieldAbility] Activate called");
+        
+        if (isShieldActive)
+        {
+            Debug.Log("[KineticShieldAbility] Shield already active, ignoring activation");
+            return;
+        }
+        
         // Guardar estado para reiniciar el cooldown más tarde
         needsDelayedCooldown = true;
         
@@ -79,7 +106,14 @@ public class KineticShieldAbility : BaseAbility
         ActivateVisualEffectServerRpc();
         
         // Aplicar reducción de daño usando PlayerStats
-        playerStats.SetDamageReduction(currentDamageReduction);
+        if (playerStats != null)
+        {
+            playerStats.SetDamageReduction(currentDamageReduction);
+        }
+        else
+        {
+            Debug.LogError("[KineticShieldAbility] playerStats is null when activating shield!");
+        }
         
         // Suscribirse al evento de daño para reflejar
         if (enableDamageReflection && playerStats != null)
@@ -280,7 +314,10 @@ public class KineticShieldAbility : BaseAbility
         DeactivateVisualEffectServerRpc();
         
         // Eliminar reducción de daño
-        playerStats.ResetDamageReduction();
+        if (playerStats != null)
+        {
+            playerStats.ResetDamageReduction();
+        }
         
         // Iniciar el cooldown
         networkOwner.StartCoroutine(StartCooldown());
